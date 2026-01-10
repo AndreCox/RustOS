@@ -13,7 +13,7 @@ $(KERNEL): src/main.rs
 	cargo +nightly build --release --target x86_64-kernel.json -Zbuild-std=core,compiler_builtins -Zbuild-std-features=compiler-builtins-mem
 
 # 2. Setup iso_root and build the ISO
-$(ISO): $(KERNEL) limine.conf
+$(ISO): $(KERNEL) limine.conf limine/limine-bios.sys limine/limine-bios-cd.bin limine/limine-uefi-cd.bin limine/limine
 	@echo "==> Preparing ISO Root"
 	mkdir -p $(ISO_ROOT)
 	cp $(KERNEL) $(ISO_ROOT)/kernel.elf
@@ -27,6 +27,12 @@ $(ISO): $(KERNEL) limine.conf
 		$(ISO_ROOT) -o $(ISO)
 	@echo "==> Deploying Limine"
 	./limine/limine bios-install $(ISO)
+
+# Build limine if its output files are missing
+limine/limine-bios.sys limine/limine-bios-cd.bin limine/limine-uefi-cd.bin limine/limine:
+	@echo "==> Ensuring Limine is built"
+	@if [ ! -d limine ]; then echo "limine/ directory not found"; false; fi
+	@cd limine && make
 
 # 3. Clean up
 clean:
