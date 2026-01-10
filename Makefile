@@ -3,12 +3,14 @@ KERNEL := target/x86_64-kernel/release/RustOS
 ISO := RustOS.iso
 ISO_ROOT := iso_root
 
+RUST_SOURCES := $(shell find src -name '*.rs' 2>/dev/null)
+
 .PHONY: all clean run iso
 
 all: $(ISO)
 
 # 1. Build the Rust kernel
-$(KERNEL): src/main.rs
+$(KERNEL): $(RUST_SOURCES) Cargo.toml Cargo.lock x86_64-kernel.json
 	@echo "==> Compiling Rust Kernel"
 	cargo +nightly build --release --target x86_64-kernel.json -Zbuild-std=core,compiler_builtins -Zbuild-std-features=compiler-builtins-mem
 

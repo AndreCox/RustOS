@@ -1,12 +1,21 @@
 #![no_std] // Indicate that we are not using the standard library
 #![no_main] // Indicate that we are not using the standard main function
 
+// Enable rust libraries
+use core::arch::asm;
 use core::panic::PanicInfo;
 use limine::request::ExecutableAddressRequest;
 use limine::request::HhdmRequest;
 use limine::{BaseRevision, request::FramebufferRequest};
 
+// Import modules
+mod helpers;
 mod interrupts;
+mod serial;
+
+// Use functions and structs from modules
+use crate::helpers::hcf;
+use crate::interrupts::{init_idt, init_pic};
 
 #[used]
 #[unsafe(link_section = ".limine_requests")]
@@ -27,49 +36,30 @@ pub static FRAMEBUFFER_REQUEST: FramebufferRequest = FramebufferRequest::new();
 #[unsafe(link_section = ".limine_requests")]
 pub static HHDM_REQUEST: HhdmRequest = HhdmRequest::new();
 
-// Halt and catch fire function
-fn hcf() -> ! {
-    loop {
-        unsafe {
-            core::arch::asm!("hlt");
-        }
-    }
-}
-
 #[panic_handler]
 fn panic(_info: &PanicInfo) -> ! {
     hcf();
 }
 
-const SERIAL_PORT: u16 = 0x3F8;
-
-fn serial_write_byte(byte: u8) {
-    unsafe {
-        core::arch::asm!(
-            "out dx, al",
-            in("dx") SERIAL_PORT,
-            in("al") byte,
-            options(nomem, nostack, preserves_flags)
-        );
-    }
-}
-
-fn serial_write_str(s: &str) {
-    for byte in s.bytes() {
-        serial_write_byte(byte);
-    }
-}
-
 #[unsafe(no_mangle)]
 pub extern "C" fn kmain() -> ! {
-    serial_write_str("Kernel started!\n");
+    println!("Kernel started!");
+
+    println!("Loading IDT and PIC...");
+    unsafe {
+        init_idt();
+        init_pic();
+        asm!("sti"); // Enable interrupts
+    }
+    println!("IDT and PIC loaded.");
 
     if !BASE_REVISION.is_supported() {
+        println!("Limine Base Revision not supported. Halting.");
         hcf();
     }
 
     if let Some(response) = FRAMEBUFFER_REQUEST.get_response() {
-        serial_write_str("Framebuffer response received.\n");
+        println!("Framebuffer response received.");
         // .framebuffers() is now an Iterator. Use .next() to get the first one.
         if let Some(framebuffer) = response.framebuffers().next() {
             for i in 0..150 {
@@ -88,6 +78,6 @@ pub extern "C" fn kmain() -> ! {
         }
     }
 
-    serial_write_str("Burn!!!");
+    println!("Burn!!!");
     hcf();
 }
