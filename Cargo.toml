@@ -1,0 +1,20 @@
+[package]
+name = "RustOS"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "RustOS"
+path = "src/main.rs"
+test = false
+bench = false
+
+
+[dependencies]
+limine = "0.5.0"
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
