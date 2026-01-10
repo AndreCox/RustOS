@@ -1,5 +1,7 @@
 use crate::helpers::hcf;
-use crate::println;
+use crate::keyboard::scancode_to_char;
+use crate::{print, println};
+use crate::{screen_print, screen_println};
 use core::arch::{asm, global_asm};
 
 // Define the Interrupt Descriptor Table (IDT) structures
@@ -184,7 +186,10 @@ pub extern "C" fn exception_handler(frame: &InterruptStackFrame) {
         unsafe {
             asm!("in al, dx", out("al") scancode, in("dx") 0x60 as u16);
         }
-        println!("Keyboard Interrupt! Scancode: {:#x}", scancode);
+        if let Some(character) = scancode_to_char(scancode) {
+            print!("{}", character);
+            screen_print!("{}", character);
+        }
     }
 
     // Send End of Interrupt (EOI) signal to PICs

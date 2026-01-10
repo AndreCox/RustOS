@@ -1,4 +1,4 @@
-fn scancode_to_char(scancode: u8) -> Option<char> {
+pub fn scancode_to_char(scancode: u8) -> Option<char> {
     match scancode {
         0x02 => Some('1'),
         0x03 => Some('2'),
