@@ -1,1 +1,5 @@
 /target
+/iso_root
+Cargo.lock
+RustOS.iso
+*.log
