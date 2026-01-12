@@ -65,6 +65,7 @@ SECTIONS
         *(.bss .bss.*)
         *(COMMON)
     } :data
+    /*_kernel_end = .; dont need this for now */
 
     /* Discard .note.* and .eh_frame* since they may cause issues on some hosts. */
     /DISCARD/ : {

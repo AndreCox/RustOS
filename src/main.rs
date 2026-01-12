@@ -3,9 +3,7 @@
 
 // Enable rust libraries
 use core::arch::asm;
-use core::fmt::Write;
 use core::panic::PanicInfo;
-use limine::framebuffer;
 use limine::request::ExecutableAddressRequest;
 use limine::request::HhdmRequest;
 use limine::{BaseRevision, request::FramebufferRequest};
@@ -14,11 +12,12 @@ use limine::{BaseRevision, request::FramebufferRequest};
 mod helpers;
 mod interrupts;
 mod keyboard;
+mod memory;
 mod renderer;
 mod serial;
 
 // Use functions and structs from modules
-use crate::helpers::hcf;
+use crate::helpers::{enable_sse, hcf};
 use crate::interrupts::{init_idt, init_pic};
 
 #[used]
@@ -45,22 +44,6 @@ fn panic(_info: &PanicInfo) -> ! {
     hcf();
 }
 
-pub unsafe fn enable_sse() {
-    use core::arch::asm;
-
-    let mut cr0: u64;
-    asm!("mov {}, cr0", out(reg) cr0);
-    cr0 &= !(1 << 2); // Clear EM bit (no emulation)
-    cr0 |= 1 << 1; // Set MP bit (monitor co-processor)
-    asm!("mov cr0, {}", in(reg) cr0);
-
-    let mut cr4: u64;
-    asm!("mov {}, cr4", out(reg) cr4);
-    cr4 |= 1 << 9; // Set OSFXSR bit (FXSAVE/FXRSTOR support)
-    cr4 |= 1 << 10; // Set OSXMMEXCPT bit (SIMD exception support)
-    asm!("mov cr4, {}", in(reg) cr4);
-}
-
 #[unsafe(no_mangle)]
 pub extern "C" fn kmain() -> ! {
     unsafe {
@@ -81,6 +64,8 @@ pub extern "C" fn kmain() -> ! {
     }
     println!("IDT and PIC loaded.");
 
+    let mut writer: renderer::FramebufferWriter; // Declare framebuffer writer
+
     // Get framebuffer response
     if let Some(fb_response) = FRAMEBUFFER_REQUEST.get_response() {
         // Get the first framebuffer
@@ -91,7 +76,7 @@ pub extern "C" fn kmain() -> ! {
             let fb_slice: &'static mut [u8] =
                 unsafe { core::slice::from_raw_parts_mut(fb_addr as *mut u8, fb_size) };
 
-            let mut writer = renderer::FramebufferWriter::new(
+            writer = renderer::FramebufferWriter::new(
                 fb_slice,
                 framebuffer.pitch(),
                 framebuffer.width(),
@@ -112,6 +97,34 @@ pub extern "C" fn kmain() -> ! {
         println!("Failed to get framebuffer response. Halting.");
         hcf();
     }
+
+    memory::init();
+
+    screen_println!("Starting OOM Test...");
+
+    let mut count = 0;
+    while let Some(address) = memory::allocate_frame() {
+        count += 1;
+
+        // We don't want to print 130,000 lines (it would be too slow)
+        // So let's only print every 1000th page found.
+        if count % 1000 == 0 {
+            screen_println!("Allocated 1000 pages... Latest: {:#x}", address);
+            println!("Allocated 1000 pages... Latest: {:#x}", address);
+        }
+    }
+
+    println!("OUT OF MEMORY!");
+    println!("Total pages allocated: {}", count);
+
+    screen_println!("OUT OF MEMORY!");
+    screen_println!("Total pages allocated: {}", count);
+
+    // Calculate how much RAM that actually was
+    let megabytes = (count * 4096) / (1024 * 1024);
+    screen_println!("Total usable RAM found: {} MiB", megabytes);
+
+    println!("Total usable RAM found: {} MiB", megabytes);
 
     println!("Burn!!!");
     hcf();

@@ -115,6 +115,49 @@ impl<'a> FramebufferWriter<'a> {
         }
     }
 
+    pub fn backspace(&mut self) {
+        let font = Font::new(FONT_DATA);
+        let char_width = font.header.width as u64;
+        let char_height = font.header.height as u64;
+
+        // don't backspace if at the start of the line
+        if self.cursor_x >= char_width {
+            self.cursor_x -= char_width;
+
+            for y in 0..char_height {
+                for x in 0..char_width {
+                    unsafe {
+                        write_pixel(
+                            self.cursor_x + x,
+                            self.cursor_y + y,
+                            0x00000000,
+                            self.framebuffer,
+                            self.pitch,
+                        );
+                    }
+                }
+            }
+        } else if self.cursor_y >= char_height {
+            // Move to end of previous line
+            self.cursor_y -= char_height;
+            self.cursor_x = self.width - char_width;
+
+            for y in 0..char_height {
+                for x in 0..char_width {
+                    unsafe {
+                        write_pixel(
+                            self.cursor_x + x,
+                            self.cursor_y + y,
+                            0x00000000,
+                            self.framebuffer,
+                            self.pitch,
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     pub fn put_char(&mut self, c: char) {
         let font = Font::new(FONT_DATA);
         let char_width = font.header.width as u64;
@@ -155,6 +198,10 @@ impl<'a> FramebufferWriter<'a> {
 impl<'a> fmt::Write for FramebufferWriter<'a> {
     fn write_str(&mut self, s: &str) -> fmt::Result {
         for c in s.chars() {
+            if c == '\x08' {
+                self.backspace();
+                continue;
+            }
             self.put_char(c);
         }
         Ok(())
