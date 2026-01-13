@@ -39,21 +39,21 @@ pub fn _print(args: fmt::Arguments) {
 }
 
 #[macro_export]
-macro_rules! print {
+macro_rules! serial_print {
     ($($arg:tt)*) => {
-        $crate::serial::_print(format_args!($($arg)*));
+        $crate::io::serial::_print(format_args!($($arg)*));
     };
 }
 
 #[macro_export]
-macro_rules! println {
+macro_rules! serial_println {
     () => {
-        $crate::print!("\n");
+        $crate::serial_print!("\n");
     };
     ($fmt:expr) => {
-        $crate::print!(concat!($fmt, "\n"));
+        $crate::serial_print!(concat!($fmt, "\n"));
     };
     ($fmt:expr, $($arg:tt)*) => {
-        $crate::print!(concat!($fmt, "\n"), $($arg)*);
+        $crate::serial_print!(concat!($fmt, "\n"), $($arg)*);
     };
 }

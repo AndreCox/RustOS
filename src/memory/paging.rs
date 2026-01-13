@@ -1,11 +1,10 @@
-use core::arch::asm;
-use limine::request::HhdmRequest;
-
 use bitflags::bitflags;
+use core::arch::asm;
 
-use crate::{memory::allocate_frame, println};
+use crate::{memory::allocate_frame, serial_println};
 
 bitflags! {
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub struct PageTableFlags: u64 {
         const PRESENT = 1 << 0;         // Page is present in memory
         const WRITABLE = 1 << 1;        // Page is writable
@@ -109,9 +108,17 @@ impl OffsetPageTable {
         if entry.is_unused() {
             let frame = allocate_frame().expect("Out of memory");
             let virt_addr = frame + hhdm_offset;
+
+            // serial_println!(
+            //     "Creating new page table at phys: {:#x} (virt: {:#x})",
+            //     frame,
+            //     virt_addr
+            // );
+
             let table = unsafe { &mut *(virt_addr as *mut PageTable) };
 
             table.zero();
+            // serial_println!("Table zeroed successfully.");
             entry.set_address(frame, PageTableFlags::PRESENT | PageTableFlags::WRITABLE);
             table
         } else {
@@ -121,7 +128,7 @@ impl OffsetPageTable {
     }
 }
 
-pub fn init_paging() {
+pub fn init_paging() -> OffsetPageTable {
     // get hhdm offset from limine
     let hhdm_response = crate::HHDM_REQUEST.get_response().unwrap();
     let hhdm_offset = hhdm_response.offset();
@@ -141,5 +148,6 @@ pub fn init_paging() {
     let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE;
     mapper.map(0xb8000, 0xb8000, flags);
 
-    println!("Paging initialized.");
+    serial_println!("Paging initialized.");
+    mapper
 }

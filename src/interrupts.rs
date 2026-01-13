@@ -1,7 +1,6 @@
 use crate::helpers::hcf;
-use crate::keyboard::scancode_to_char;
-use crate::{print, println};
-use crate::{screen_print, screen_println};
+use crate::io::keyboard::SCANCODE_QUEUE;
+use crate::{globals, println, serial_println};
 use core::arch::{asm, global_asm};
 
 // Define the Interrupt Descriptor Table (IDT) structures
@@ -100,6 +99,14 @@ pub unsafe fn init_idt() {
         asm!("mov {0:x}, cs", out(reg) cs, options(nomem, nostack, preserves_flags));
     }
 
+    globals::KERNEL_CODE_SEGMENT = cs;
+
+    unsafe {
+        asm!("mov {0:x}, ss", out(reg) globals::KERNEL_DATA_SEGMENT, options(nomem, nostack, preserves_flags));
+    }
+
+    println!("Current CS is: {:#x}", cs);
+
     // Install handlers for the first 48 ISRs
     unsafe {
         for i in 0..48 {
@@ -142,9 +149,8 @@ pub unsafe fn init_pic() {
     outb(PIC1_DATA, 0x01);
     outb(PIC2_DATA, 0x01);
 
-    // Mask all interrupts except Keyboard (IRQ 1)
-    // 0xFD = 11111101 (Only bit 1 is 0/enabled)
-    outb(PIC1_DATA, 0xFD);
+    // Mask all interrupts except Keyboard (IRQ 1) and Timer (IRQ 0)
+    outb(PIC1_DATA, 0xFC);
     outb(PIC2_DATA, 0xFF);
 }
 
@@ -156,39 +162,48 @@ fn outb(port: u16, val: u8) {
 
 // The common exception handler
 #[unsafe(no_mangle)]
-pub extern "C" fn exception_handler(frame: &InterruptStackFrame) {
+pub extern "C" fn exception_handler(frame: &InterruptStackFrame) -> u64 {
     let num = frame.interrupt_number;
+    let mut current_rsp = frame as *const _ as u64;
 
     if num < 32 {
-        println!("FATAL EXCEPTION: {} at {:#x}", num, frame.rip);
+        serial_println!("FATAL EXCEPTION: {} at {:#x}", num, frame.rip);
         // print stack frame registers
-        println!("RAX: {:#x}", frame.rax);
-        println!("RBX: {:#x}", frame.rbx);
-        println!("RCX: {:#x}", frame.rcx);
-        println!("RDX: {:#x}", frame.rdx);
-        println!("RSI: {:#x}", frame.rsi);
-        println!("RDI: {:#x}", frame.rdi);
-        println!("RBP: {:#x}", frame.rbp);
-        println!("R8:  {:#x}", frame.r8);
-        println!("R9:  {:#x}", frame.r9);
-        println!("R10: {:#x}", frame.r10);
-        println!("R11: {:#x}", frame.r11);
-        println!("R12: {:#x}", frame.r12);
-        println!("R13: {:#x}", frame.r13);
-        println!("R14: {:#x}", frame.r14);
-        println!("R15: {:#x}", frame.r15);
+        serial_println!("RAX: {:#x}", frame.rax);
+        serial_println!("RBX: {:#x}", frame.rbx);
+        serial_println!("RCX: {:#x}", frame.rcx);
+        serial_println!("RDX: {:#x}", frame.rdx);
+        serial_println!("RSI: {:#x}", frame.rsi);
+        serial_println!("RDI: {:#x}", frame.rdi);
+        serial_println!("RBP: {:#x}", frame.rbp);
+        serial_println!("R8:  {:#x}", frame.r8);
+        serial_println!("R9:  {:#x}", frame.r9);
+        serial_println!("R10: {:#x}", frame.r10);
+        serial_println!("R11: {:#x}", frame.r11);
+        serial_println!("R12: {:#x}", frame.r12);
+        serial_println!("R13: {:#x}", frame.r13);
+        serial_println!("R14: {:#x}", frame.r14);
+        serial_println!("R15: {:#x}", frame.r15);
         hcf(); // Halt the system
     }
 
-    if num == 33 {
+    if num == 32 {
+        // IRQ0 - Timer interrupt
+        crate::timer::tick();
+
+        outb(0x20, 0x20); // Send EOI to Master PIC
+
+        if let Some(mut scheduler) = crate::multitasker::scheduler::SCHEDULER.try_lock() {
+            current_rsp = scheduler.schedule(current_rsp);
+        }
+    } else if num == 33 {
         // IRQ1 - Keyboard interrupt
         let scancode: u8;
         unsafe {
             asm!("in al, dx", out("al") scancode, in("dx") 0x60 as u16);
         }
-        if let Some(character) = scancode_to_char(scancode) {
-            print!("{}", character);
-            screen_print!("{}", character);
+        if let Err(_) = SCANCODE_QUEUE.push(scancode) {
+            println!("Warning: Scancode queue full, dropping input");
         }
     }
 
@@ -201,6 +216,8 @@ pub extern "C" fn exception_handler(frame: &InterruptStackFrame) {
             outb(0xA0, 0x20); // Additional EOI for IRQs >= 48
         }
     }
+
+    current_rsp
 }
 
 // Assembly code for ISR stubs and common handler
@@ -245,6 +262,10 @@ global_asm!(
         mov rdi, rsp
         call exception_handler
 
+        // On return, rax contains the new rsp
+        mov rsp, rax
+
+        // Restore registers
         pop rax; pop rbx; pop rcx; pop rdx
         pop rsi; pop rdi; pop rbp; pop r8
         pop r9;  pop r10; pop r11; pop r12

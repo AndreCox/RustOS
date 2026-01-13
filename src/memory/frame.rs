@@ -1,4 +1,4 @@
-use crate::{helpers::hcf, println, screen_print, screen_println};
+use crate::{helpers::hcf, screen_println, serial_println};
 use limine::request::MemoryMapRequest;
 use spin::Mutex;
 
@@ -27,10 +27,15 @@ impl BitmapAllocator {
     }
 
     fn alloc_frame(&mut self) -> Option<u64> {
+        let start_frame = 256; // Skip first 1MB (256 pages)
+
         // We will check 'total_pages' number of bits, starting from our last success
         for i in 0..self.total_pages {
             // Use modulo to wrap back to 0 if we hit the end of the bitmap
             let frame_idx = (self.last_allocated + i) % self.total_pages;
+            if frame_idx < start_frame {
+                continue; // Skip reserved low memory
+            }
 
             let byte_idx = frame_idx / 8;
             let bit_idx = frame_idx % 8;
@@ -54,7 +59,7 @@ impl BitmapAllocator {
             }
         }
 
-        println!("Out of memory!");
+        serial_println!("Out of memory!");
         screen_println!("Out of memory!");
         None
     }
@@ -101,11 +106,11 @@ pub fn mem_map_init() {
         }
     });
 
-    println!("Highest addressable memory: {:#x} bytes", highest_address);
+    serial_println!("Highest addressable memory: {:#x} bytes", highest_address);
 
     let bitmap_size = calculate_bitmap_size(highest_address);
 
-    println!("Bitmap size: {} bytes", bitmap_size);
+    serial_println!("Bitmap size: {} bytes", bitmap_size);
 
     // determine the first usable memory region to place the bitmap
     let bitmap_location = mem_map_response
@@ -126,7 +131,7 @@ pub fn mem_map_init() {
         hcf();
     }
 
-    println!("Placing bitmap at address: {:#x}", bitmap_location);
+    serial_println!("Placing bitmap at address: {:#x}", bitmap_location);
 
     let bitmap_ptr = (bitmap_location + hhdm_offset) as *mut u8;
 
@@ -191,9 +196,11 @@ pub fn mem_map_init() {
             entry_type_str
         );
 
-        println!(
+        serial_println!(
             "Base: {:#016x}, Length: {:#016x}, Type: {:?}",
-            base, length, entry_type_str
+            base,
+            length,
+            entry_type_str
         );
     }
 }

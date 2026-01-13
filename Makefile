@@ -12,7 +12,7 @@ all: $(ISO)
 # 1. Build the Rust kernel
 $(KERNEL): $(RUST_SOURCES) Cargo.toml Cargo.lock x86_64-kernel.json
 	@echo "==> Compiling Rust Kernel"
-	cargo +nightly build --release --target x86_64-kernel.json -Zbuild-std=core,compiler_builtins -Zbuild-std-features=compiler-builtins-mem
+	cargo +nightly build --release --target x86_64-kernel.json -Zbuild-std=core,compiler_builtins,alloc -Zbuild-std-features=compiler-builtins-mem
 
 # 2. Setup iso_root and build the ISO
 $(ISO): $(KERNEL) limine.conf limine/limine-bios.sys limine/limine-bios-cd.bin limine/limine-uefi-cd.bin limine/limine

@@ -1,24 +1,33 @@
 #![no_std] // Indicate that we are not using the standard library
 #![no_main] // Indicate that we are not using the standard main function
 
+extern crate alloc; // Import the alloc crate for heap allocations
+
 // Enable rust libraries
+use alloc::vec;
+use alloc::vec::Vec;
 use core::arch::asm;
 use core::panic::PanicInfo;
 use limine::request::ExecutableAddressRequest;
 use limine::request::HhdmRequest;
 use limine::{BaseRevision, request::FramebufferRequest};
+use spin::Mutex;
 
 // Import modules
+mod globals;
 mod helpers;
 mod interrupts;
-mod keyboard;
+mod io;
 mod memory;
-mod renderer;
-mod serial;
+mod multitasker;
+mod screen;
+mod timer;
 
+use crate::screen::graphics::draw_ui;
 // Use functions and structs from modules
 use crate::helpers::{enable_sse, hcf};
 use crate::interrupts::{init_idt, init_pic};
+use crate::io::keyboard::{SCANCODE_QUEUE, scancode_to_char};
 
 #[used]
 #[unsafe(link_section = ".limine_requests")]
@@ -41,6 +50,11 @@ pub static HHDM_REQUEST: HhdmRequest = HhdmRequest::new();
 
 #[panic_handler]
 fn panic(_info: &PanicInfo) -> ! {
+    println!("KERNEL PANIC: {}", _info);
+    // disable interrupts
+    unsafe {
+        asm!("cli");
+    }
     hcf();
 }
 
@@ -55,16 +69,34 @@ pub extern "C" fn kmain() -> ! {
     }
 
     println!("Kernel started!");
-
     println!("Loading IDT and PIC...");
     unsafe {
         init_idt();
         init_pic();
-        asm!("sti"); // Enable interrupts
     }
     println!("IDT and PIC loaded.");
 
-    let mut writer: renderer::FramebufferWriter; // Declare framebuffer writer
+    println!("Initializing Memory...");
+    memory::init();
+    println!("Memory initialized.");
+    println!("Setting up Timer...");
+    timer::init_timer();
+    println!("Timer setup complete.");
+
+    println!("Setting up Framebuffer...");
+    let writer: screen::renderer::FramebufferWriter; // Declare framebuffer writer
+
+    let t1 = crate::multitasker::task::Task::new(1, task_a as u64);
+    let t2 = crate::multitasker::task::Task::new(2, task_b as u64);
+    let _compositor_task =
+        crate::multitasker::task::Task::new(3, crate::screen::compositor_task as u64);
+
+    {
+        let mut sched = crate::multitasker::scheduler::SCHEDULER.lock();
+        // sched.add_task(t1);
+        // sched.add_task(t2);
+        sched.add_task(_compositor_task);
+    }
 
     // Get framebuffer response
     if let Some(fb_response) = FRAMEBUFFER_REQUEST.get_response() {
@@ -76,19 +108,19 @@ pub extern "C" fn kmain() -> ! {
             let fb_slice: &'static mut [u8] =
                 unsafe { core::slice::from_raw_parts_mut(fb_addr as *mut u8, fb_size) };
 
-            writer = renderer::FramebufferWriter::new(
+            writer = screen::renderer::FramebufferWriter::new(
                 fb_slice,
                 framebuffer.pitch(),
                 framebuffer.width(),
                 framebuffer.height(),
             );
 
-            renderer::init(writer);
+            screen::renderer::init(writer);
 
-            screen_println!("Framebuffer found:");
-            screen_println!("  Width: {}", framebuffer.width());
-            screen_println!("  Height: {}", framebuffer.height());
-            screen_println!("  Pitch: {}", framebuffer.pitch());
+            println!("Framebuffer found:");
+            println!("  Width: {}", framebuffer.width());
+            println!("  Height: {}", framebuffer.height());
+            println!("  Pitch: {}", framebuffer.pitch());
         } else {
             println!("No framebuffer found. Halting.");
             hcf();
@@ -97,35 +129,38 @@ pub extern "C" fn kmain() -> ! {
         println!("Failed to get framebuffer response. Halting.");
         hcf();
     }
+    println!("Framebuffer setup complete.");
+    draw_ui();
 
-    memory::init();
+    println!("Setting up Multitasking");
+    multitasker::init_multitasking();
+    println!("Multitasking setup complete.");
 
-    screen_println!("Starting OOM Test...");
-
-    let mut count = 0;
-    while let Some(address) = memory::allocate_frame() {
-        count += 1;
-
-        // We don't want to print 130,000 lines (it would be too slow)
-        // So let's only print every 1000th page found.
-        if count % 1000 == 0 {
-            screen_println!("Allocated 1000 pages... Latest: {:#x}", address);
-            println!("Allocated 1000 pages... Latest: {:#x}", address);
-        }
+    // Now safe to enable interrupts
+    unsafe {
+        asm!("sti"); // Enable interrupts
     }
+    loop {
+        while let Some(scancode) = SCANCODE_QUEUE.pop() {
+            if let Some(character) = scancode_to_char(scancode) {
+                print!("{}", character);
+            }
+        }
 
-    println!("OUT OF MEMORY!");
-    println!("Total pages allocated: {}", count);
+        x86_64::instructions::hlt();
+    }
+}
 
-    screen_println!("OUT OF MEMORY!");
-    screen_println!("Total pages allocated: {}", count);
+fn task_a() -> ! {
+    loop {
+        println!("Task A is running.");
+        timer::sleep_ms(1);
+    }
+}
 
-    // Calculate how much RAM that actually was
-    let megabytes = (count * 4096) / (1024 * 1024);
-    screen_println!("Total usable RAM found: {} MiB", megabytes);
-
-    println!("Total usable RAM found: {} MiB", megabytes);
-
-    println!("Burn!!!");
-    hcf();
+fn task_b() -> ! {
+    loop {
+        println!("Task B is running.");
+        timer::sleep_ms(1);
+    }
 }

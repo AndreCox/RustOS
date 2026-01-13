@@ -1,9 +1,12 @@
 pub mod frame;
+mod heap;
 pub mod paging;
 
-pub use frame::{allocate_frame, deallocate_frame};
+pub use frame::allocate_frame;
+pub use heap::{get_heap_size, get_heap_usage};
 
 pub fn init() {
     frame::mem_map_init();
-    paging::init_paging();
+    let mut mapper = paging::init_paging();
+    heap::init_heap(&mut mapper);
 }

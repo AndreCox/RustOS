@@ -1,3 +1,10 @@
+use crossbeam_queue::ArrayQueue;
+use lazy_static::lazy_static;
+
+lazy_static! {
+    pub static ref SCANCODE_QUEUE: ArrayQueue<u8> = ArrayQueue::new(100);
+}
+
 static mut LSHIFT: bool = false;
 static mut RSHIFT: bool = false;
 
