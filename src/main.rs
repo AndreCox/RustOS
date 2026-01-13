@@ -4,14 +4,11 @@
 extern crate alloc; // Import the alloc crate for heap allocations
 
 // Enable rust libraries
-use alloc::vec;
-use alloc::vec::Vec;
 use core::arch::asm;
 use core::panic::PanicInfo;
 use limine::request::ExecutableAddressRequest;
 use limine::request::HhdmRequest;
 use limine::{BaseRevision, request::FramebufferRequest};
-use spin::Mutex;
 
 // Import modules
 mod globals;
@@ -23,7 +20,6 @@ mod multitasker;
 mod screen;
 mod timer;
 
-use crate::screen::graphics::draw_ui;
 // Use functions and structs from modules
 use crate::helpers::{enable_sse, hcf};
 use crate::interrupts::{init_idt, init_pic};
@@ -108,8 +104,19 @@ pub extern "C" fn kmain() -> ! {
             let fb_slice: &'static mut [u8] =
                 unsafe { core::slice::from_raw_parts_mut(fb_addr as *mut u8, fb_size) };
 
+            let hhdm_offset = HHDM_REQUEST.get_response().unwrap().offset();
+            let pages_needed = (fb_size + 4095) / 4096;
+            let backbuffer_phys =
+                memory::allocate_frame().expect("Failed to allocate backbuffer frame");
+
+            let backbuffer_virt = (backbuffer_phys + hhdm_offset) as *mut u8;
+
+            let backbuffer_slice =
+                unsafe { core::slice::from_raw_parts_mut(backbuffer_virt, fb_size) };
+
             writer = screen::renderer::FramebufferWriter::new(
                 fb_slice,
+                backbuffer_slice,
                 framebuffer.pitch(),
                 framebuffer.width(),
                 framebuffer.height(),
@@ -130,7 +137,6 @@ pub extern "C" fn kmain() -> ! {
         hcf();
     }
     println!("Framebuffer setup complete.");
-    draw_ui();
 
     println!("Setting up Multitasking");
     multitasker::init_multitasking();
@@ -154,13 +160,13 @@ pub extern "C" fn kmain() -> ! {
 fn task_a() -> ! {
     loop {
         println!("Task A is running.");
-        timer::sleep_ms(1);
+        timer::sleep_ms(16);
     }
 }
 
 fn task_b() -> ! {
     loop {
         println!("Task B is running.");
-        timer::sleep_ms(1);
+        timer::sleep_ms(16);
     }
 }

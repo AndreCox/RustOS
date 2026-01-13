@@ -12,3 +12,9 @@ pub fn init_multitasking() {
 
     scheduler.current_task = Some(main_task);
 }
+
+pub fn yield_now() {
+    unsafe {
+        core::arch::asm!("int 0x20"); // Manually trigger the Timer/Scheduler IRQ
+    }
+}

@@ -1,6 +1,6 @@
 use core::sync::atomic::{AtomicU64, Ordering};
 
-use crate::println;
+use crate::multitasker::yield_now;
 static TICKS: AtomicU64 = AtomicU64::new(0);
 pub const TICKS_PER_SECOND: u64 = 1000;
 
@@ -18,9 +18,7 @@ pub fn get_uptime_ms() -> u64 {
 pub fn sleep_ms(ms: u64) {
     let start_time = get_uptime_ms();
     while get_uptime_ms() < start_time + ms {
-        // 'hlt' stops the CPU until the next interrupt (the timer)
-        // This prevents the CPU from running at 100% while sleeping
-        x86_64::instructions::hlt();
+        yield_now();
     }
 }
 

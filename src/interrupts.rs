@@ -191,10 +191,10 @@ pub extern "C" fn exception_handler(frame: &InterruptStackFrame) -> u64 {
         // IRQ0 - Timer interrupt
         crate::timer::tick();
 
-        outb(0x20, 0x20); // Send EOI to Master PIC
-
-        if let Some(mut scheduler) = crate::multitasker::scheduler::SCHEDULER.try_lock() {
-            current_rsp = scheduler.schedule(current_rsp);
+        if crate::timer::get_uptime_ms() % 10 == 0 {
+            if let Some(mut scheduler) = crate::multitasker::scheduler::SCHEDULER.try_lock() {
+                current_rsp = scheduler.schedule(current_rsp);
+            }
         }
     } else if num == 33 {
         // IRQ1 - Keyboard interrupt

@@ -1,23 +1,25 @@
-use core::fmt::{self, Write};
-use spin::Mutex;
-
 const SERIAL_PORT: u16 = 0x3F8; // COM1 port address
 
-// This is wrapped in Mutex to allow safe concurrent access
-pub static WRITER: Mutex<SerialWriter> = Mutex::new(SerialWriter);
-
-// A simple serial writer struct
-pub struct SerialWriter;
-impl Write for SerialWriter {
-    fn write_str(&mut self, s: &str) -> fmt::Result {
-        for byte in s.bytes() {
-            serial_write_byte(byte);
-        }
-        Ok(())
+pub fn is_transmit_empty() -> bool {
+    let status: u8;
+    unsafe {
+        core::arch::asm!(
+            "in al, dx",
+            out("al") status,
+            in("dx") SERIAL_PORT + 5, // Status register is at offset 5
+            options(nomem, nostack, preserves_flags)
+        );
     }
+    // Bit 5 (0x20) is the "Transmitter Holding Register Empty" flag
+    (status & 0x20) != 0
 }
 
-fn serial_write_byte(byte: u8) {
+pub fn serial_write_byte(byte: u8) {
+    // Wait for the hardware to be ready for the next byte
+    while !is_transmit_empty() {
+        core::hint::spin_loop();
+    }
+
     unsafe {
         core::arch::asm!(
             "out dx, al",
@@ -26,34 +28,4 @@ fn serial_write_byte(byte: u8) {
             options(nomem, nostack, preserves_flags)
         );
     }
-}
-
-// create print macros
-#[doc(hidden)] // Hide from documentation
-pub fn _print(args: fmt::Arguments) {
-    use core::fmt::Write;
-    WRITER
-        .lock()
-        .write_fmt(args)
-        .expect("Failed to write to serial"); // Panic on failure
-}
-
-#[macro_export]
-macro_rules! serial_print {
-    ($($arg:tt)*) => {
-        $crate::io::serial::_print(format_args!($($arg)*));
-    };
-}
-
-#[macro_export]
-macro_rules! serial_println {
-    () => {
-        $crate::serial_print!("\n");
-    };
-    ($fmt:expr) => {
-        $crate::serial_print!(concat!($fmt, "\n"));
-    };
-    ($fmt:expr, $($arg:tt)*) => {
-        $crate::serial_print!(concat!($fmt, "\n"), $($arg)*);
-    };
 }
