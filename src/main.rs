@@ -82,6 +82,7 @@ pub extern "C" fn kmain() -> ! {
     println!("Setting up Framebuffer...");
     let writer: screen::renderer::FramebufferWriter; // Declare framebuffer writer
 
+    let idle_task = crate::multitasker::task::Task::new(0, crate::multitasker::idle_task as u64);
     let t1 = crate::multitasker::task::Task::new(1, task_a as u64);
     let t2 = crate::multitasker::task::Task::new(2, task_b as u64);
     let _compositor_task =
@@ -89,7 +90,8 @@ pub extern "C" fn kmain() -> ! {
 
     {
         let mut sched = crate::multitasker::scheduler::SCHEDULER.lock();
-        // sched.add_task(t1);
+        sched.add_task(idle_task);
+        sched.add_task(t1);
         // sched.add_task(t2);
         sched.add_task(_compositor_task);
     }
@@ -101,22 +103,35 @@ pub extern "C" fn kmain() -> ! {
             let fb_addr = framebuffer.addr();
             let fb_size = (framebuffer.pitch() * framebuffer.height()) as usize;
 
-            let fb_slice: &'static mut [u8] =
+            let hardware_fb: &'static mut [u8] =
                 unsafe { core::slice::from_raw_parts_mut(fb_addr as *mut u8, fb_size) };
 
             let hhdm_offset = HHDM_REQUEST.get_response().unwrap().offset();
             let pages_needed = (fb_size + 4095) / 4096;
-            let backbuffer_phys =
-                memory::allocate_frame().expect("Failed to allocate backbuffer frame");
+            println!(
+                "Allocating {} pages ({} KB) for backbuffer",
+                pages_needed,
+                pages_needed * 4
+            );
 
-            let backbuffer_virt = (backbuffer_phys + hhdm_offset) as *mut u8;
+            use alloc::vec::Vec;
 
-            let backbuffer_slice =
-                unsafe { core::slice::from_raw_parts_mut(backbuffer_virt, fb_size) };
+            println!("Allocating buffer 0...");
+            let mut buffer_0_vec = Vec::with_capacity(fb_size);
+            buffer_0_vec.resize(fb_size, 0u8);
+            let buffer_0: &'static mut [u8] = buffer_0_vec.leak();
+            println!("Buffer 0 at: {:#x}", buffer_0.as_ptr() as u64);
+
+            println!("Allocating buffer 1...");
+            let mut buffer_1_vec = Vec::with_capacity(fb_size);
+            buffer_1_vec.resize(fb_size, 0u8);
+            let buffer_1: &'static mut [u8] = buffer_1_vec.leak();
+            println!("Buffer 1 at: {:#x}", buffer_1.as_ptr() as u64);
 
             writer = screen::renderer::FramebufferWriter::new(
-                fb_slice,
-                backbuffer_slice,
+                hardware_fb,
+                buffer_0,
+                buffer_1,
                 framebuffer.pitch(),
                 framebuffer.width(),
                 framebuffer.height(),
@@ -160,13 +175,14 @@ pub extern "C" fn kmain() -> ! {
 fn task_a() -> ! {
     loop {
         println!("Task A is running.");
-        timer::sleep_ms(16);
+        println!("CPU Usage: {}", crate::interrupts::get_cpu_usage());
+        timer::sleep_ms(10);
     }
 }
 
 fn task_b() -> ! {
     loop {
         println!("Task B is running.");
-        timer::sleep_ms(16);
+        timer::sleep_ms(1000);
     }
 }

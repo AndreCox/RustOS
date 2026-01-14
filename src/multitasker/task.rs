@@ -3,6 +3,7 @@ use crate::alloc::alloc::{Layout, alloc};
 pub struct Task {
     pub id: u64,
     pub stack_pointer: u64,
+    pub wake_at: u64,
 }
 
 #[repr(C)]
@@ -76,6 +77,7 @@ impl Task {
         Self {
             id,
             stack_pointer: context_ptr as u64,
+            wake_at: 0,
         }
     }
 }

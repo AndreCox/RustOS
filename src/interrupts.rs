@@ -2,6 +2,10 @@ use crate::helpers::hcf;
 use crate::io::keyboard::SCANCODE_QUEUE;
 use crate::{globals, println, serial_println};
 use core::arch::{asm, global_asm};
+use core::sync::atomic::AtomicU64;
+
+static BUSY_TICKS: AtomicU64 = AtomicU64::new(0);
+static TOTAL_TICKS: AtomicU64 = AtomicU64::new(0);
 
 // Define the Interrupt Descriptor Table (IDT) structures
 #[repr(C, packed)]
@@ -189,12 +193,24 @@ pub extern "C" fn exception_handler(frame: &InterruptStackFrame) -> u64 {
 
     if num == 32 {
         // IRQ0 - Timer interrupt
+        TOTAL_TICKS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         crate::timer::tick();
 
-        if crate::timer::get_uptime_ms() % 10 == 0 {
-            if let Some(mut scheduler) = crate::multitasker::scheduler::SCHEDULER.try_lock() {
-                current_rsp = scheduler.schedule(current_rsp);
+        if let Some(mut scheduler) = crate::multitasker::scheduler::SCHEDULER.try_lock() {
+            let current_id = scheduler.get_current_task_id();
+
+            // Only count as busy if it's NOT the idle task AND NOT sleeping
+            if current_id != 0 {
+                if let Some(ref task) = scheduler.current_task {
+                    let now = crate::timer::get_uptime_ms();
+                    // Only count as busy if the task is actually ready to run
+                    if now >= task.wake_at {
+                        BUSY_TICKS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                    }
+                }
             }
+
+            current_rsp = scheduler.schedule(current_rsp);
         }
     } else if num == 33 {
         // IRQ1 - Keyboard interrupt
@@ -293,3 +309,15 @@ global_asm!(
     .noaltmacro
     "#
 );
+
+pub fn get_cpu_usage() -> u64 {
+    let total = TOTAL_TICKS.swap(0, core::sync::atomic::Ordering::Relaxed);
+    let busy = BUSY_TICKS.swap(0, core::sync::atomic::Ordering::Relaxed);
+
+    if total == 0 {
+        return 0;
+    }
+
+    // Math: (Busy / Total) * 100
+    (busy * 100) / total
+}
