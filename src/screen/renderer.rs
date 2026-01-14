@@ -78,26 +78,6 @@ impl<'a> FramebufferWriter<'a> {
         }
     }
 
-    // Get the buffer we're currently drawing to
-    fn get_draw_buffer(&mut self) -> &mut [u8] {
-        let idx = self.current_draw_buffer.load(Ordering::Acquire);
-        if idx == 0 {
-            self.buffer_0
-        } else {
-            self.buffer_1
-        }
-    }
-
-    // Get the buffer that should be displayed
-    fn get_display_buffer(&self) -> &[u8] {
-        let idx = self.current_display_buffer.load(Ordering::Acquire);
-        if idx == 0 {
-            self.buffer_0
-        } else {
-            self.buffer_1
-        }
-    }
-
     #[inline(always)]
     fn get_phys_y(&self, y: u64) -> usize {
         if y < HEADER_HEIGHT {
@@ -221,7 +201,7 @@ impl<'a> FramebufferWriter<'a> {
     }
 
     fn scroll(&mut self) {
-        let char_h = self.font.header.height as usize;
+        let char_h: usize = self.font.header.height as usize;
         let log_zone_h = (self.height - HEADER_HEIGHT) as usize;
         self.render_offset_y = (self.render_offset_y + char_h) % log_zone_h;
         let bottom_y = self.height - char_h as u64;
@@ -282,31 +262,6 @@ impl<'a> FramebufferWriter<'a> {
         }
     }
 
-    // Copy the current display buffer to the hardware framebuffer
-    // This is what actually updates the screen
-    pub fn present(&mut self) {
-        if !self.needs_hw_update.swap(false, Ordering::Acquire) {
-            return; // No update needed
-        }
-
-        let display_idx = self.current_display_buffer.load(Ordering::Acquire);
-
-        // Get raw pointers to avoid borrow checker issues
-        let src = if display_idx == 0 {
-            self.buffer_0.as_ptr()
-        } else {
-            self.buffer_1.as_ptr()
-        };
-
-        let dst = self.hardware_fb.as_mut_ptr();
-        let len = self.hardware_fb.len();
-
-        // Copy display buffer to hardware framebuffer
-        unsafe {
-            Self::simd_memcpy(dst, src, len);
-        }
-    }
-
     // Chunked present - update hardware framebuffer in smaller chunks
     // This allows interrupts to fire between chunks
     pub fn present_chunked(&mut self) {
@@ -315,32 +270,37 @@ impl<'a> FramebufferWriter<'a> {
         }
 
         let display_idx = self.current_display_buffer.load(Ordering::Acquire);
-
-        // Get raw pointers to avoid borrow checker issues
         let src = if display_idx == 0 {
             self.buffer_0.as_ptr()
         } else {
             self.buffer_1.as_ptr()
         };
-
         let dst = self.hardware_fb.as_mut_ptr();
-        let total_size = self.hardware_fb.len();
 
-        const CHUNK_SIZE: usize = 32 * 1024; // 32KB chunks
-        let mut offset = 0;
+        let pitch = self.pitch as usize;
+        let header_bytes = HEADER_HEIGHT as usize * pitch;
+        let log_zone_h = (self.height - HEADER_HEIGHT) as usize;
+        let offset_bytes = self.render_offset_y * pitch;
+        let total_log_bytes = log_zone_h * pitch;
 
-        while offset < total_size {
-            let chunk_len = core::cmp::min(CHUNK_SIZE, total_size - offset);
+        unsafe {
+            // 1. Copy Header (Fixed)
+            Self::simd_memcpy(dst, src, header_bytes);
 
-            unsafe {
-                Self::simd_memcpy(dst.add(offset), src.add(offset), chunk_len);
-            }
+            // 2. Copy the "Bottom" half of memory to the "Top" of the screen
+            // This is the data from the offset to the end of the buffer
+            let part_a_src = src.add(header_bytes + offset_bytes);
+            let part_a_dst = dst.add(header_bytes);
+            let part_a_len = total_log_bytes - offset_bytes;
+            Self::simd_memcpy(part_a_dst, part_a_src, part_a_len);
 
-            offset += chunk_len;
-
-            // Small pause to allow interrupts
-            if offset < total_size {
-                core::hint::spin_loop();
+            // 3. Copy the "Top" half of memory to the "Bottom" of the screen
+            // This is the data from the start of the log zone up to the offset
+            if offset_bytes > 0 {
+                let part_b_src = src.add(header_bytes);
+                let part_b_dst = dst.add(header_bytes + part_a_len);
+                let part_b_len = offset_bytes;
+                Self::simd_memcpy(part_b_dst, part_b_src, part_b_len);
             }
         }
     }

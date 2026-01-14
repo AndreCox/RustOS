@@ -56,6 +56,7 @@ fn panic(_info: &PanicInfo) -> ! {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn kmain() -> ! {
+    // Enable SSE support for floating point operations
     unsafe {
         enable_sse();
     }
@@ -67,7 +68,7 @@ pub extern "C" fn kmain() -> ! {
     println!("Kernel started!");
     println!("Loading IDT and PIC...");
     unsafe {
-        init_idt();
+        init_idt(); // start the IDT
         init_pic();
     }
     println!("IDT and PIC loaded.");
@@ -91,7 +92,7 @@ pub extern "C" fn kmain() -> ! {
     {
         let mut sched = crate::multitasker::scheduler::SCHEDULER.lock();
         sched.add_task(idle_task);
-        sched.add_task(t1);
+        // sched.add_task(t1);
         // sched.add_task(t2);
         sched.add_task(_compositor_task);
     }
@@ -175,8 +176,7 @@ pub extern "C" fn kmain() -> ! {
 fn task_a() -> ! {
     loop {
         println!("Task A is running.");
-        println!("CPU Usage: {}", crate::interrupts::get_cpu_usage());
-        timer::sleep_ms(10);
+        timer::sleep_ms(16);
     }
 }
 
