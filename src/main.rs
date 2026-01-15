@@ -143,7 +143,7 @@ pub extern "C" fn kmain() -> ! {
     if let Some(ref mut scheduler) = *sched {
         scheduler.add_task(idle_task);
         scheduler.add_task(_compositor_task);
-        // scheduler.add_task(t1);
+        scheduler.add_task(t1);
     }
     drop(sched);
 
@@ -163,7 +163,7 @@ pub extern "C" fn kmain() -> ! {
             }
         }
 
-        crate::multitasker::yield_now();
+        crate::timer::sleep_ms(16); // Prevent busy waiting
     }
 }
 
@@ -171,7 +171,8 @@ fn task_a() -> ! {
     loop {
         let cpu_percent = interrupts::get_cpu_usage();
         println!("CPU Usage: {}%", cpu_percent);
-        // timer::sleep_ms(16);
+        println!("Task A is running.");
+        timer::sleep_ms(16);
     }
 }
 

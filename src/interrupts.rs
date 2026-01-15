@@ -196,25 +196,22 @@ pub extern "C" fn exception_handler(frame: &InterruptStackFrame) -> u64 {
         TOTAL_TICKS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         crate::timer::tick();
 
-        x86_64::instructions::interrupts::without_interrupts(|| {
-            // Switch from try_lock() to .lock()
-            // In an ISR, we MUST get this lock to progress the system
-            if let Some(scheduler) = crate::multitasker::scheduler::SCHEDULER.lock().as_mut() {
-                let current_id = scheduler.get_current_task_id();
+        // In an ISR, we MUST get this lock to progress the system
+        if let Some(scheduler) = crate::multitasker::scheduler::SCHEDULER.lock().as_mut() {
+            let current_id = scheduler.get_current_task_id();
 
-                if current_id != 0 {
-                    if let Some(ref task) = scheduler.current_task {
-                        let now = crate::timer::get_uptime_ms();
-                        if now >= task.wake_at {
-                            BUSY_TICKS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-                        }
+            if current_id != 0 {
+                if let Some(ref task) = scheduler.current_task {
+                    let now = crate::timer::get_uptime_ms();
+                    if now >= task.wake_at {
+                        BUSY_TICKS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                     }
                 }
-
-                // IMPORTANT: We update current_rsp to the new stack pointer
-                current_rsp = scheduler.schedule(current_rsp);
             }
-        });
+
+            // IMPORTANT: We update current_rsp to the new stack pointer
+            current_rsp = scheduler.schedule(current_rsp);
+        }
     } else if num == 33 {
         // IRQ1 - Keyboard interrupt
         let scancode: u8;
@@ -313,14 +310,14 @@ global_asm!(
     "#
 );
 
-pub fn get_cpu_usage() -> f32 {
+pub fn get_cpu_usage() -> u32 {
     let total = TOTAL_TICKS.swap(0, core::sync::atomic::Ordering::Relaxed);
     let busy = BUSY_TICKS.swap(0, core::sync::atomic::Ordering::Relaxed);
 
     if total == 0 {
-        return 0.0;
+        return 0;
     }
 
     // Math: (Busy / Total) * 100
-    (busy as f32 / total as f32) * 100.0
+    ((busy as u64 * 100) / total as u64) as u32
 }
