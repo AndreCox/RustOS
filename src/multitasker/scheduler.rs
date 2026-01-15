@@ -72,8 +72,4 @@ impl Scheduler {
     }
 }
 
-// this lazy_static delays the initialization of the SCHEDULER until it's first accessed
-// since we use the heap we need to wait until after the allocator is set up
-lazy_static! {
-    pub static ref SCHEDULER: Mutex<Scheduler> = Mutex::new(Scheduler::new());
-}
+pub static SCHEDULER: Mutex<Option<Scheduler>> = Mutex::new(None);

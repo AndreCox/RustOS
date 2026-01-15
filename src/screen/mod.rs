@@ -1,4 +1,4 @@
-use crate::{println, serial_println};
+use crate::println;
 use core::sync::atomic::{AtomicU64, Ordering};
 
 pub mod font;
@@ -8,66 +8,56 @@ pub mod renderer;
 static LAST_UPTIME_DRAW: AtomicU64 = AtomicU64::new(0);
 
 pub fn compositor_task() -> ! {
-    println!("Compositor task started with double buffering.");
+    println!("Compositor task started with Shadow Buffering.");
 
     loop {
-        let mut did_work = false;
-        let mut needs_present = false;
-
-        // Phase 1: Draw to backbuffer
+        // Single lock scope: We draw to RAM and flush to VRAM in one go.
+        // The new `present()` is smart enough to be fast (only copies dirty rows).
         if let Some(mut guard) = crate::screen::renderer::WRITER.try_lock() {
             if let Some(writer) = guard.as_mut() {
+                let mut needs_present = false;
                 let mut count = 0;
-                let mut drew_chars = false;
 
+                // 1. Drain the text queue (Writes to Shadow Buffer)
                 while let Some(c) = crate::io::log_buffer::DISPLAY_QUEUE.pop_char() {
                     writer.put_char(c as char);
                     count += 1;
-                    drew_chars = true;
-                    did_work = true;
+                    needs_present = true;
+
+                    // Limit chars per frame to prevent freezing if queue is flooded
                     if count > 500 {
                         break;
                     }
                 }
 
+                // 2. Draw UI elements (Writes to Shadow Buffer)
                 let current_time = crate::timer::get_uptime_ms();
                 let last_draw = LAST_UPTIME_DRAW.load(Ordering::Relaxed);
+
                 if current_time - last_draw >= 100 {
+                    // Assuming draw_ui uses the standard draw functions,
+                    // it will automatically trigger the dirty flags in the writer.
                     crate::screen::graphics::draw_ui(writer);
                     LAST_UPTIME_DRAW.store(current_time, Ordering::Relaxed);
-                    drew_chars = true;
-                    did_work = true;
-                }
-
-                // Fast page flip between our buffers
-                if drew_chars {
-                    writer.swap_buffers();
                     needs_present = true;
                 }
-            }
-        }
 
-        // Phase 2: Copy to hardware framebuffer (if needed)
-        // Do this in a separate lock to reduce contention
-        if needs_present {
-            if let Some(mut guard) = crate::screen::renderer::WRITER.try_lock() {
-                if let Some(writer) = guard.as_mut() {
-                    // Use chunked present to allow interrupts
-                    writer.present_chunked();
+                // 3. Flush to Hardware
+                // If nothing changed, this returns immediately.
+                // If text was typed, it copies ~16 rows (tiny).
+                // If screen scrolled, it copies the update.
+                if needs_present {
+                    writer.present();
                 }
             }
         }
 
-        // Drain serial queue
+        // Drain serial queue (totally independent of screen)
         while let Some(byte) = crate::io::log_buffer::SERIAL_QUEUE.pop_char() {
             crate::io::serial::serial_write_byte(byte);
-            did_work = true;
         }
 
-        if !did_work {
-            crate::timer::sleep_ms(16); // ~60 FPS max
-        } else {
-            crate::multitasker::yield_now();
-        }
+        // Cap at ~60 FPS
+        crate::timer::sleep_ms(16);
     }
 }

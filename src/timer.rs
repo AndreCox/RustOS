@@ -8,11 +8,7 @@ const PIT_BASE_FREQUENCY: u64 = 1193180;
 
 pub fn tick() {
     // Relaxed ordering is fine here because we're just incrementing a counter
-
-    let old = TICKS.fetch_add(1, Ordering::Relaxed);
-    if old % 1000 == 0 {
-        serial_println!("Uptime: {} seconds", old / TICKS_PER_SECOND);
-    }
+    TICKS.fetch_add(1, Ordering::Relaxed);
 }
 
 pub fn get_uptime_ms() -> u64 {
@@ -25,11 +21,13 @@ pub fn sleep_ms(ms: u64) {
     let wake_at = get_uptime_ms() + ms;
 
     // Set the wake_at time for the current task
-    if let Some(mut sched) = crate::multitasker::scheduler::SCHEDULER.try_lock() {
-        if let Some(ref mut task) = sched.current_task {
-            task.wake_at = wake_at;
+    x86_64::instructions::interrupts::without_interrupts(|| {
+        if let Some(ref mut sched) = *crate::multitasker::scheduler::SCHEDULER.lock() {
+            if let Some(ref mut task) = sched.current_task {
+                task.wake_at = wake_at;
+            }
         }
-    }
+    });
 
     // Yield immediately so the Idle task can take over
     crate::multitasker::yield_now();

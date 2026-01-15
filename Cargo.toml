@@ -21,6 +21,9 @@ x86_64 = { version = "0.15", features = ["instructions"] }
 
 [profile.dev]
 panic = "abort"
+strip = false
+opt-level = 0
+split-debuginfo = "off"
 
 [profile.release]
 panic = "abort"

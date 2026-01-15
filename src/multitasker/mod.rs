@@ -2,7 +2,7 @@ pub mod scheduler;
 pub mod task;
 
 pub fn init_multitasking() {
-    let mut scheduler = scheduler::SCHEDULER.lock();
+    let mut new_scheduler = scheduler::Scheduler::new();
 
     // We save the Main Task, aka the kernel task
     let main_task = task::Task {
@@ -11,7 +11,8 @@ pub fn init_multitasking() {
         wake_at: 0,
     };
 
-    scheduler.current_task = Some(main_task);
+    new_scheduler.current_task = Some(main_task);
+    *scheduler::SCHEDULER.lock() = Some(new_scheduler);
 }
 
 pub fn yield_now() {

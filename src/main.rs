@@ -76,26 +76,9 @@ pub extern "C" fn kmain() -> ! {
     println!("Initializing Memory...");
     memory::init();
     println!("Memory initialized.");
-    println!("Setting up Timer...");
-    timer::init_timer();
-    println!("Timer setup complete.");
 
     println!("Setting up Framebuffer...");
     let writer: screen::renderer::FramebufferWriter; // Declare framebuffer writer
-
-    let idle_task = crate::multitasker::task::Task::new(0, crate::multitasker::idle_task as u64);
-    let t1 = crate::multitasker::task::Task::new(1, task_a as u64);
-    let t2 = crate::multitasker::task::Task::new(2, task_b as u64);
-    let _compositor_task =
-        crate::multitasker::task::Task::new(3, crate::screen::compositor_task as u64);
-
-    {
-        let mut sched = crate::multitasker::scheduler::SCHEDULER.lock();
-        sched.add_task(idle_task);
-        sched.add_task(t1);
-        // sched.add_task(t2);
-        sched.add_task(_compositor_task);
-    }
 
     // Get framebuffer response
     if let Some(fb_response) = FRAMEBUFFER_REQUEST.get_response() {
@@ -106,14 +89,6 @@ pub extern "C" fn kmain() -> ! {
 
             let hardware_fb: &'static mut [u8] =
                 unsafe { core::slice::from_raw_parts_mut(fb_addr as *mut u8, fb_size) };
-
-            let hhdm_offset = HHDM_REQUEST.get_response().unwrap().offset();
-            let pages_needed = (fb_size + 4095) / 4096;
-            println!(
-                "Allocating {} pages ({} KB) for backbuffer",
-                pages_needed,
-                pages_needed * 4
-            );
 
             use alloc::vec::Vec;
 
@@ -158,7 +133,26 @@ pub extern "C" fn kmain() -> ! {
     multitasker::init_multitasking();
     println!("Multitasking setup complete.");
 
+    let idle_task = crate::multitasker::task::Task::new(0, crate::multitasker::idle_task as u64);
+    let t1 = crate::multitasker::task::Task::new(1, task_a as u64);
+    let t2 = crate::multitasker::task::Task::new(2, task_b as u64);
+    let _compositor_task =
+        crate::multitasker::task::Task::new(3, crate::screen::compositor_task as u64);
+
+    let mut sched = crate::multitasker::scheduler::SCHEDULER.lock();
+    if let Some(ref mut scheduler) = *sched {
+        scheduler.add_task(idle_task);
+        scheduler.add_task(_compositor_task);
+        scheduler.add_task(t1);
+    }
+    drop(sched);
+
+    println!("Setting up Timer...");
+    timer::init_timer();
+    println!("Timer setup complete.");
+
     // Now safe to enable interrupts
+    println!("Enabling interrupts...");
     unsafe {
         asm!("sti"); // Enable interrupts
     }
@@ -169,12 +163,14 @@ pub extern "C" fn kmain() -> ! {
             }
         }
 
-        x86_64::instructions::hlt();
+        crate::timer::sleep_ms(16); // Prevent busy waiting
     }
 }
 
 fn task_a() -> ! {
     loop {
+        let cpu_percent = interrupts::get_cpu_usage();
+        println!("CPU Usage: {}%", cpu_percent);
         println!("Task A is running.");
         timer::sleep_ms(500);
     }

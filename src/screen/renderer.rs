@@ -2,7 +2,8 @@
 
 use crate::screen::font::{FONT_DATA, Font};
 use core::fmt;
-use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use core::ptr;
+use core::sync::atomic::{AtomicBool, Ordering};
 use spin::Mutex;
 
 pub static WRITER: Mutex<Option<FramebufferWriter>> = Mutex::new(None);
@@ -14,18 +15,17 @@ pub fn init(writer: FramebufferWriter<'static>) {
 }
 
 pub struct FramebufferWriter<'a> {
-    // Hardware framebuffer (what the display controller actually reads)
+    // Hardware framebuffer (VRAM)
     pub hardware_fb: &'a mut [u8],
 
-    // Our two software buffers for double buffering
-    pub buffer_0: &'a mut [u8],
-    pub buffer_1: &'a mut [u8],
+    // Software Shadow Buffer (RAM)
+    // We only use buffer_0 as our "Shadow". buffer_1 is unused in this optimized method,
+    // but kept to match your initialization signature.
+    pub buffer: &'a mut [u8],
 
-    // Track which buffer we're currently drawing to
-    current_draw_buffer: AtomicU8, // 0 or 1
-
-    // Track which buffer should be displayed next
-    current_display_buffer: AtomicU8, // 0 or 1
+    // Dirty tracking (Y-coordinates only are usually sufficient for terminal optimization)
+    dirty_min_y: usize,
+    dirty_max_y: usize,
 
     // Flag to indicate we need to copy to hardware
     needs_hw_update: AtomicBool,
@@ -36,90 +36,78 @@ pub struct FramebufferWriter<'a> {
     cursor_x: u64,
     cursor_y: u64,
     pub font: Font,
-    pub render_offset_y: usize,
-    full_redraw: AtomicBool,
 }
 
 impl<'a> FramebufferWriter<'a> {
     pub fn new(
         hardware_fb: &'a mut [u8],
         buffer_0: &'a mut [u8],
-        buffer_1: &'a mut [u8],
+        _buffer_1: &'a mut [u8], // Unused in Shadow Buffer mode
         pitch: u64,
         width: u64,
         height: u64,
     ) -> Self {
-        // Clear all buffers initially
+        // Clear buffers
         for byte in hardware_fb.iter_mut() {
             *byte = 0;
         }
         for byte in buffer_0.iter_mut() {
             *byte = 0;
         }
-        for byte in buffer_1.iter_mut() {
-            *byte = 0;
-        }
 
         Self {
             hardware_fb,
-            buffer_0,
-            buffer_1,
-            current_draw_buffer: AtomicU8::new(0),
-            current_display_buffer: AtomicU8::new(0),
-            needs_hw_update: AtomicBool::new(false),
+            buffer: buffer_0,
+            dirty_min_y: 0,
+            dirty_max_y: height as usize, // Initial full redraw
+            needs_hw_update: AtomicBool::new(true),
             pitch,
             width,
             height,
             cursor_x: 0,
             cursor_y: HEADER_HEIGHT,
             font: Font::new(FONT_DATA),
-            render_offset_y: 0,
-            full_redraw: AtomicBool::new(true),
         }
     }
 
-    #[inline(always)]
-    fn get_phys_y(&self, y: u64) -> usize {
-        if y < HEADER_HEIGHT {
-            y as usize
-        } else {
-            let log_zone_h = self.height - HEADER_HEIGHT;
-            let relative_y = y - HEADER_HEIGHT;
-            let phys_rel_y = (relative_y as usize + self.render_offset_y) % log_zone_h as usize;
-            (HEADER_HEIGHT as usize) + phys_rel_y
+    /// Mark a vertical range as dirty so it gets copied to GPU next frame
+    #[inline]
+    fn mark_dirty(&mut self, y: u64, height: u64) {
+        let y_start = y as usize;
+        let y_end = (y + height) as usize;
+
+        if y_start < self.dirty_min_y {
+            self.dirty_min_y = y_start;
         }
+        if y_end > self.dirty_max_y {
+            self.dirty_max_y = y_end.min(self.height as usize);
+        }
+        self.needs_hw_update.store(true, Ordering::Relaxed);
     }
+
     pub fn draw_rect(&mut self, x: u64, y: u64, width: u64, height: u64, color: u32) {
-        let draw_idx = self.current_draw_buffer.load(Ordering::Acquire);
         let pitch = self.pitch;
+        let buffer_ptr = self.buffer.as_mut_ptr();
+        let buffer_len = self.buffer.len();
 
-        // Get the draw buffer pointer
-        let draw_buffer_ptr = if draw_idx == 0 {
-            self.buffer_0.as_mut_ptr()
-        } else {
-            self.buffer_1.as_mut_ptr()
-        };
-
-        let draw_buffer_len = if draw_idx == 0 {
-            self.buffer_0.len()
-        } else {
-            self.buffer_1.len()
-        };
+        // Safety check bounds roughly (exact clipping omitted for brevity)
+        if x + width > self.width || y + height > self.height {
+            return;
+        }
 
         for row in y..(y + height) {
-            let phys_y = self.get_phys_y(row);
-            let start = (phys_y * pitch as usize) + (x as usize * 4);
-            let row_bytes = (width * 4) as usize;
-            if start + row_bytes <= draw_buffer_len {
+            let offset = (row * pitch) as usize + (x as usize * 4);
+            // Bounds check per row to be safe
+            if offset + (width as usize * 4) <= buffer_len {
                 unsafe {
-                    let ptr = draw_buffer_ptr.add(start) as *mut u32;
+                    let row_ptr = buffer_ptr.add(offset) as *mut u32;
                     for i in 0..width as usize {
-                        ptr.add(i).write(color);
+                        row_ptr.add(i).write(color);
                     }
                 }
             }
         }
-        self.full_redraw.store(true, Ordering::Relaxed);
+        self.mark_dirty(y, height);
     }
 
     pub fn clear_rect(&mut self, x: u64, y: u64, width: u64, height: u64) {
@@ -131,38 +119,27 @@ impl<'a> FramebufferWriter<'a> {
         let font_h = self.font.header.height as usize;
         let bytes_per_row = (font_w + 7) / 8;
         let glyph = self.font.get_glyph(c);
-
-        let draw_idx = self.current_draw_buffer.load(Ordering::Acquire);
         let pitch = self.pitch;
-
-        // Get the draw buffer pointer
-        let draw_buffer_ptr = if draw_idx == 0 {
-            self.buffer_0.as_mut_ptr()
-        } else {
-            self.buffer_1.as_mut_ptr()
-        };
-
-        let draw_buffer_len = if draw_idx == 0 {
-            self.buffer_0.len()
-        } else {
-            self.buffer_1.len()
-        };
+        let buffer_ptr = self.buffer.as_mut_ptr();
+        let buffer_len = self.buffer.len();
 
         for row in 0..font_h {
-            let phys_y = self.get_phys_y(y + row as u64);
-            let row_offset = phys_y * pitch as usize;
+            let buffer_row_offset = ((y as usize + row) * pitch as usize);
+
             for col in 0..font_w {
                 let byte_idx = row * bytes_per_row + (col / 8);
                 let bit_idx = 7 - (col % 8);
+
                 if (glyph[byte_idx] >> bit_idx) & 1 == 1 {
-                    let pixel_offset = row_offset + ((x + col as u64) as usize * 4);
-                    if pixel_offset + 3 < draw_buffer_len {
-                        (draw_buffer_ptr.add(pixel_offset) as *mut u32).write(color);
+                    let pixel_offset = buffer_row_offset + ((x as usize + col) * 4);
+
+                    if pixel_offset + 4 <= buffer_len {
+                        (buffer_ptr.add(pixel_offset) as *mut u32).write(color);
                     }
                 }
             }
         }
-        self.full_redraw.store(true, Ordering::Relaxed);
+        self.mark_dirty(y, font_h as u64);
     }
 
     pub fn draw_string_at(&mut self, s: &str, x: u64, y: u64, color: u32) {
@@ -178,10 +155,19 @@ impl<'a> FramebufferWriter<'a> {
     pub fn put_char(&mut self, c: char) {
         let char_w = self.font.header.width as u64;
         let char_h = self.font.header.height as u64;
+
         if self.cursor_y + char_h > self.height {
             self.scroll();
         }
+
         match c {
+            '\x08' => {
+                // Backspace
+                if self.cursor_x >= char_w {
+                    self.cursor_x -= char_w;
+                    self.clear_rect(self.cursor_x, self.cursor_y, char_w, char_h);
+                }
+            }
             '\n' => {
                 self.cursor_x = 0;
                 self.cursor_y += char_h;
@@ -194,6 +180,7 @@ impl<'a> FramebufferWriter<'a> {
                 self.cursor_x += char_w;
             }
         }
+
         if self.cursor_x + char_w > self.width {
             self.cursor_x = 0;
             self.cursor_y += char_h;
@@ -201,107 +188,71 @@ impl<'a> FramebufferWriter<'a> {
     }
 
     fn scroll(&mut self) {
-        let char_h: usize = self.font.header.height as usize;
-        let log_zone_h = (self.height - HEADER_HEIGHT) as usize;
-        self.render_offset_y = (self.render_offset_y + char_h) % log_zone_h;
-        let bottom_y = self.height - char_h as u64;
-        self.clear_rect(0, bottom_y, self.width, char_h as u64);
-        self.cursor_y = self.height - char_h as u64;
-    }
+        let char_h = self.font.header.height as usize;
+        let pitch = self.pitch as usize;
+        let buffer_len = self.buffer.len();
 
-    // Fast page flip between our buffers
-    pub fn swap_buffers(&mut self) {
-        if !self.full_redraw.swap(false, Ordering::Relaxed) {
-            return; // Nothing changed
-        }
-
-        // Flip which buffer is "active" for display
-        let old_draw = self.current_draw_buffer.load(Ordering::Acquire);
-        let old_display = self.current_display_buffer.load(Ordering::Acquire);
-
-        // The buffer we were drawing to is now the display buffer
-        self.current_display_buffer
-            .store(old_draw, Ordering::Release);
-
-        // The old display buffer becomes our new draw buffer
-        self.current_draw_buffer
-            .store(old_display, Ordering::Release);
-
-        // Mark that we need to update hardware framebuffer
-        self.needs_hw_update.store(true, Ordering::Release);
-
-        // Copy the old display buffer to new draw buffer for continuity
-        self.copy_display_to_draw();
-    }
-
-    // Copy display buffer to draw buffer for continuity
-    fn copy_display_to_draw(&mut self) {
-        let draw_idx = self.current_draw_buffer.load(Ordering::Acquire);
-        let display_idx = self.current_display_buffer.load(Ordering::Acquire);
-
-        if draw_idx == display_idx {
-            return; // Nothing to copy
-        }
-
-        let len = self.buffer_0.len();
+        // Define the scrollable area (excluding header)
+        let header_bytes = HEADER_HEIGHT as usize * pitch;
+        let scroll_zone_bytes = buffer_len - header_bytes;
+        let bytes_to_shift = scroll_zone_bytes - (char_h * pitch);
 
         unsafe {
-            let src = if display_idx == 0 {
-                self.buffer_0.as_ptr()
-            } else {
-                self.buffer_1.as_ptr()
-            };
+            let ptr = self.buffer.as_mut_ptr();
 
-            let dst = if draw_idx == 0 {
-                self.buffer_0.as_mut_ptr()
-            } else {
-                self.buffer_1.as_mut_ptr()
-            };
+            // Move memory UP: dst = header_end, src = header_end + 1 line
+            ptr::copy(
+                ptr.add(header_bytes + char_h * pitch), // src
+                ptr.add(header_bytes),                  // dst
+                bytes_to_shift,                         // count
+            );
 
-            Self::simd_memcpy(dst, src, len);
+            // Clear the new bottom line
+            let bottom_start = header_bytes + bytes_to_shift;
+            ptr::write_bytes(ptr.add(bottom_start), 0, char_h * pitch);
         }
+
+        self.cursor_y -= char_h as u64;
+
+        // Scrolling invalidates the whole scrollable area
+        self.mark_dirty(HEADER_HEIGHT, self.height - HEADER_HEIGHT);
     }
 
-    // Chunked present - update hardware framebuffer in smaller chunks
-    // This allows interrupts to fire between chunks
-    pub fn present_chunked(&mut self) {
+    /// Optimized present function
+    /// Only copies rows that have changed (dirty) to the hardware framebuffer
+    pub fn present(&mut self) {
         if !self.needs_hw_update.swap(false, Ordering::Acquire) {
             return;
         }
 
-        let display_idx = self.current_display_buffer.load(Ordering::Acquire);
-        let src = if display_idx == 0 {
-            self.buffer_0.as_ptr()
-        } else {
-            self.buffer_1.as_ptr()
-        };
-        let dst = self.hardware_fb.as_mut_ptr();
+        // Capture current dirty bounds
+        let y_start = self.dirty_min_y;
+        let y_end = self.dirty_max_y;
+
+        // Reset dirty bounds for next frame (inverted logic to expand on next write)
+        self.dirty_min_y = self.height as usize;
+        self.dirty_max_y = 0;
+
+        // Sanity check
+        if y_start >= y_end {
+            return;
+        }
 
         let pitch = self.pitch as usize;
-        let header_bytes = HEADER_HEIGHT as usize * pitch;
-        let log_zone_h = (self.height - HEADER_HEIGHT) as usize;
-        let offset_bytes = self.render_offset_y * pitch;
-        let total_log_bytes = log_zone_h * pitch;
+        let start_offset = y_start * pitch;
+        let end_offset = y_end * pitch;
+        let len = end_offset - start_offset;
+
+        // Safety bounds check
+        if end_offset > self.hardware_fb.len() || end_offset > self.buffer.len() {
+            return;
+        }
 
         unsafe {
-            // 1. Copy Header (Fixed)
-            Self::simd_memcpy(dst, src, header_bytes);
+            let src = self.buffer.as_ptr().add(start_offset);
+            let dst = self.hardware_fb.as_mut_ptr().add(start_offset);
 
-            // 2. Copy the "Bottom" half of memory to the "Top" of the screen
-            // This is the data from the offset to the end of the buffer
-            let part_a_src = src.add(header_bytes + offset_bytes);
-            let part_a_dst = dst.add(header_bytes);
-            let part_a_len = total_log_bytes - offset_bytes;
-            Self::simd_memcpy(part_a_dst, part_a_src, part_a_len);
-
-            // 3. Copy the "Top" half of memory to the "Bottom" of the screen
-            // This is the data from the start of the log zone up to the offset
-            if offset_bytes > 0 {
-                let part_b_src = src.add(header_bytes);
-                let part_b_dst = dst.add(header_bytes + part_a_len);
-                let part_b_len = offset_bytes;
-                Self::simd_memcpy(part_b_dst, part_b_src, part_b_len);
-            }
+            Self::simd_memcpy(dst, src, len);
         }
     }
 
@@ -310,6 +261,7 @@ impl<'a> FramebufferWriter<'a> {
         use core::arch::x86_64::*;
         let mut offset = 0;
 
+        // Use AVX2 if available (32 bytes at a time)
         #[cfg(target_feature = "avx2")]
         {
             while offset + 32 <= len {
@@ -321,12 +273,14 @@ impl<'a> FramebufferWriter<'a> {
             }
         }
 
+        // Fallback to SSE/64-bit copy
         while offset + 8 <= len {
             (dst.add(offset) as *mut u64)
                 .write_unaligned((src.add(offset) as *const u64).read_unaligned());
             offset += 8;
         }
 
+        // Handle remaining bytes
         while offset < len {
             dst.add(offset).write(src.add(offset).read());
             offset += 1;
