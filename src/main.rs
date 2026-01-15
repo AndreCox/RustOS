@@ -92,7 +92,7 @@ pub extern "C" fn kmain() -> ! {
     {
         let mut sched = crate::multitasker::scheduler::SCHEDULER.lock();
         sched.add_task(idle_task);
-        // sched.add_task(t1);
+        sched.add_task(t1);
         // sched.add_task(t2);
         sched.add_task(_compositor_task);
     }
@@ -176,7 +176,7 @@ pub extern "C" fn kmain() -> ! {
 fn task_a() -> ! {
     loop {
         println!("Task A is running.");
-        timer::sleep_ms(16);
+        timer::sleep_ms(500);
     }
 }
 

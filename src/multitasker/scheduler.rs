@@ -25,7 +25,7 @@ impl Scheduler {
         let now = crate::timer::get_uptime_ms();
 
         for _ in 0..self.tasks.len() {
-            let mut task = self.tasks.pop_front()?;
+            let task = self.tasks.pop_front()?;
 
             // If it's the Idle Task (ID 0) OR it's time to wake up
             if task.id == 0 || now >= task.wake_at {
@@ -54,7 +54,7 @@ impl Scheduler {
         // 2. Look for the next READY task
         // We loop through the queue to find someone who is awake.
         for _ in 0..self.tasks.len() {
-            if let Some(mut task) = self.tasks.pop_front() {
+            if let Some(task) = self.tasks.pop_front() {
                 if task.id == 0 || now >= task.wake_at {
                     // We found a task!
                     let next_sp = task.stack_pointer;
