@@ -5,7 +5,7 @@ use linked_list_allocator::LockedHeap;
 static ALLOCATOR: LockedHeap = LockedHeap::empty();
 
 pub const HEAP_START: u64 = 0x_4444_4444_0000;
-pub const HEAP_SIZE: u64 = 1024 * 1024 * 10; // allocate 10MB for now so we have enough space for the double buffer
+pub const HEAP_SIZE: u64 = 1024 * 1024 * 128; // allocate 10MB for now so we have enough space for the double buffer
 
 pub fn init_heap(mapper: &mut OffsetPageTable) {
     let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE;

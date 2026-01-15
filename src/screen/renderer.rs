@@ -182,6 +182,15 @@ impl<'a> FramebufferWriter<'a> {
             self.scroll();
         }
         match c {
+            //backspace
+            '\x08' => {
+                if self.cursor_x >= char_w {
+                    self.cursor_x -= char_w;
+                    unsafe {
+                        self.draw_rect(self.cursor_x, self.cursor_y, char_w, char_h, 0x00000000);
+                    }
+                }
+            }
             '\n' => {
                 self.cursor_x = 0;
                 self.cursor_y += char_h;

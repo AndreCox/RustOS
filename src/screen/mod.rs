@@ -11,7 +11,6 @@ pub fn compositor_task() -> ! {
     println!("Compositor task started with double buffering.");
 
     loop {
-        let mut did_work = false;
         let mut needs_present = false;
 
         // Phase 1: Draw to backbuffer
@@ -24,7 +23,6 @@ pub fn compositor_task() -> ! {
                     writer.put_char(c as char);
                     count += 1;
                     drew_chars = true;
-                    did_work = true;
                     if count > 500 {
                         break;
                     }
@@ -36,7 +34,6 @@ pub fn compositor_task() -> ! {
                     crate::screen::graphics::draw_ui(writer);
                     LAST_UPTIME_DRAW.store(current_time, Ordering::Relaxed);
                     drew_chars = true;
-                    did_work = true;
                 }
 
                 // Fast page flip between our buffers
@@ -61,13 +58,8 @@ pub fn compositor_task() -> ! {
         // Drain serial queue
         while let Some(byte) = crate::io::log_buffer::SERIAL_QUEUE.pop_char() {
             crate::io::serial::serial_write_byte(byte);
-            did_work = true;
         }
 
-        if !did_work {
-            crate::timer::sleep_ms(16); // ~60 FPS max
-        } else {
-            crate::multitasker::yield_now();
-        }
+        crate::timer::sleep_ms(16); // ~60 FPS max
     }
 }

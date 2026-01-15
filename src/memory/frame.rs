@@ -117,11 +117,8 @@ pub fn mem_map_init() {
         .entries()
         .iter()
         .find(|entry| {
-            matches!(
-                entry.entry_type,
-                limine::memory_map::EntryType::USABLE
-                    | limine::memory_map::EntryType::BOOTLOADER_RECLAIMABLE
-            ) && entry.length >= bitmap_size as u64
+            matches!(entry.entry_type, limine::memory_map::EntryType::USABLE)
+                && entry.length >= bitmap_size as u64
         })
         .map(|entry| entry.base)
         .expect("No suitable memory region found for bitmap");
@@ -151,11 +148,7 @@ pub fn mem_map_init() {
 
     // Now mark usable pages as free
     for entry in mem_map_response.entries() {
-        if !matches!(
-            entry.entry_type,
-            limine::memory_map::EntryType::USABLE
-                | limine::memory_map::EntryType::BOOTLOADER_RECLAIMABLE
-        ) {
+        if !matches!(entry.entry_type, limine::memory_map::EntryType::USABLE) {
             continue;
         }
         for addr in (entry.base..entry.base + entry.length).step_by(0x1000) {
