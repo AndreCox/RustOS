@@ -151,3 +151,16 @@ pub fn init_paging() -> OffsetPageTable {
     serial_println!("Paging initialized.");
     mapper
 }
+
+pub fn get_active_mapper() -> OffsetPageTable {
+    let hhdm_response = crate::HHDM_REQUEST.get_response().unwrap();
+    let hhdm_offset = hhdm_response.offset();
+
+    let mut cr3: u64;
+    unsafe {
+        asm!("mov {}, cr3", out(reg) cr3);
+    }
+    cr3 &= 0x000fffff_fffff000;
+
+    unsafe { OffsetPageTable::new(cr3, hhdm_offset) }
+}

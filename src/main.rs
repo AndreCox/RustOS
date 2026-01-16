@@ -1,9 +1,12 @@
 #![no_std] // Indicate that we are not using the standard library
 #![no_main] // Indicate that we are not using the standard main function
+#![feature(alloc_error_handler)]
 
 extern crate alloc; // Import the alloc crate for heap allocations
 
 // Enable rust libraries
+use alloc::vec::Vec;
+use core::alloc::Layout;
 use core::arch::asm;
 use core::panic::PanicInfo;
 use limine::request::ExecutableAddressRequest;
@@ -24,6 +27,7 @@ mod timer;
 use crate::helpers::{enable_sse, hcf};
 use crate::interrupts::{init_idt, init_pic};
 use crate::io::keyboard::{SCANCODE_QUEUE, scancode_to_char};
+use crate::timer::sleep_ms;
 
 #[used]
 #[unsafe(link_section = ".limine_requests")]
@@ -52,6 +56,15 @@ fn panic(_info: &PanicInfo) -> ! {
         asm!("cli");
     }
     hcf();
+}
+
+#[alloc_error_handler]
+fn alloc_error_handler(layout: Layout) -> ! {
+    panic!(
+        "Allocation error: size {} bytes, alignment {} bytes",
+        layout.size(),
+        layout.align()
+    );
 }
 
 #[unsafe(no_mangle)]
@@ -143,7 +156,8 @@ pub extern "C" fn kmain() -> ! {
     if let Some(ref mut scheduler) = *sched {
         scheduler.add_task(idle_task);
         scheduler.add_task(_compositor_task);
-        scheduler.add_task(t1);
+        // scheduler.add_task(t1);
+        scheduler.add_task(t2);
     }
     drop(sched);
 
@@ -172,13 +186,29 @@ fn task_a() -> ! {
         let cpu_percent = interrupts::get_cpu_usage();
         println!("CPU Usage: {}%", cpu_percent);
         println!("Task A is running.");
-        timer::sleep_ms(500);
+        timer::sleep_ms(1000);
     }
 }
 
 fn task_b() -> ! {
     loop {
-        println!("Task B is running.");
-        timer::sleep_ms(1000);
+        println!("--- Recycling Test ---");
+
+        println!("Initial usage: {} KB", memory::get_heap_usage() / 1024);
+        sleep_ms(1000);
+        {
+            let temp_vec: Vec<u64> = alloc::vec::Vec::with_capacity(50 * 1024 * 1024 / 8); // 50MB
+            println!("Usage with Vec: {} KB", memory::get_heap_usage() / 1024);
+            sleep_ms(1000);
+        } // <--- temp_vec is DROPPED here
+
+        println!("Usage after drop: {} KB", memory::get_heap_usage() / 1024);
+
+        // If the "after drop" size is back to roughly the "Initial" size,
+        // then Rust is successfully freeing your memory!
+
+        loop {
+            sleep_ms(10000);
+        }
     }
 }

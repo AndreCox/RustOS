@@ -2,7 +2,7 @@ use super::paging::{OffsetPageTable, PageTableFlags};
 use linked_list_allocator::LockedHeap;
 
 #[global_allocator]
-static ALLOCATOR: LockedHeap = LockedHeap::empty();
+pub static ALLOCATOR: LockedHeap = LockedHeap::empty();
 
 pub const HEAP_START: u64 = 0x_4444_4444_0000;
 pub const HEAP_SIZE: u64 = 1024 * 1024 * 128; // allocate 10MB for now so we have enough space for the double buffer

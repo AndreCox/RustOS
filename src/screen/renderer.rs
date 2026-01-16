@@ -48,12 +48,8 @@ impl<'a> FramebufferWriter<'a> {
         height: u64,
     ) -> Self {
         // Clear buffers
-        for byte in hardware_fb.iter_mut() {
-            *byte = 0;
-        }
-        for byte in buffer_0.iter_mut() {
-            *byte = 0;
-        }
+        hardware_fb.fill(0);
+        buffer_0.fill(0);
 
         Self {
             hardware_fb,
@@ -86,25 +82,21 @@ impl<'a> FramebufferWriter<'a> {
     }
 
     pub fn draw_rect(&mut self, x: u64, y: u64, width: u64, height: u64, color: u32) {
-        let pitch = self.pitch;
-        let buffer_ptr = self.buffer.as_mut_ptr();
-        let buffer_len = self.buffer.len();
+        let pitch = self.pitch as usize;
+        let width = width as usize;
 
-        // Safety check bounds roughly (exact clipping omitted for brevity)
-        if x + width > self.width || y + height > self.height {
-            return;
-        }
+        // Cast the byte buffer to u32 once for easier indexing
+        // Note: This assumes self.buffer is aligned to 4 bytes!
+        let (_, pixels, _) = unsafe { self.buffer.align_to_mut::<u32>() };
+        let pixels_per_row = pitch / 4;
 
-        for row in y..(y + height) {
-            let offset = (row * pitch) as usize + (x as usize * 4);
-            // Bounds check per row to be safe
-            if offset + (width as usize * 4) <= buffer_len {
-                unsafe {
-                    let row_ptr = buffer_ptr.add(offset) as *mut u32;
-                    for i in 0..width as usize {
-                        row_ptr.add(i).write(color);
-                    }
-                }
+        for row in y as usize..(y + height) as usize {
+            let start = row * pixels_per_row + x as usize;
+            let end = start + width;
+
+            if end <= pixels.len() {
+                // This is significantly faster than a manual 'for' loop
+                pixels[start..end].fill(color);
             }
         }
         self.mark_dirty(y, height);
@@ -119,22 +111,29 @@ impl<'a> FramebufferWriter<'a> {
         let font_h = self.font.header.height as usize;
         let bytes_per_row = (font_w + 7) / 8;
         let glyph = self.font.get_glyph(c);
-        let pitch = self.pitch;
-        let buffer_ptr = self.buffer.as_mut_ptr();
-        let buffer_len = self.buffer.len();
+        let pitch = self.pitch as usize;
+
+        // Get the base pointer to the start of the character on the screen
+        let start_offset = (y as usize * pitch) + (x as usize * 4);
+        let buffer_ptr = self.buffer.as_mut_ptr().add(start_offset) as *mut u32;
 
         for row in 0..font_h {
-            let buffer_row_offset = ((y as usize + row) * pitch as usize);
+            // Pointer to the start of this specific row on the screen
+            let row_ptr = (buffer_ptr as *mut u8).add(row * pitch) as *mut u32;
 
-            for col in 0..font_w {
-                let byte_idx = row * bytes_per_row + (col / 8);
-                let bit_idx = 7 - (col % 8);
+            for byte_col in 0..bytes_per_row {
+                let font_byte = glyph[row * bytes_per_row + byte_col];
 
-                if (glyph[byte_idx] >> bit_idx) & 1 == 1 {
-                    let pixel_offset = buffer_row_offset + ((x as usize + col) * 4);
+                // Process 8 pixels at a time from one font byte
+                for bit in 0..8 {
+                    let col = byte_col * 8 + bit;
+                    if col >= font_w {
+                        break;
+                    } // Handle fonts not divisible by 8
 
-                    if pixel_offset + 4 <= buffer_len {
-                        (buffer_ptr.add(pixel_offset) as *mut u32).write(color);
+                    // Check bit from most significant to least significant
+                    if (font_byte << bit) & 0x80 != 0 {
+                        row_ptr.add(col).write(color);
                     }
                 }
             }
