@@ -195,24 +195,30 @@ fn task_a() -> ! {
 }
 
 fn task_doom() -> ! {
-    println!("Starting DOOM!");
-    timer::sleep_ms(500);
-
-    println!(
-        "Initial Heap Usage: {} KB",
-        crate::memory::get_heap_usage() / 1024
-    );
     let arg0 = b"doomgeneric\0".as_ptr() as *const i8;
-    let argv = [arg0];
+    let arg1 = b"-iwad\0".as_ptr() as *const i8;
+    let arg2 = b"DOOM.WAD\0".as_ptr() as *const i8;
+    let argv = [arg0, arg1, arg2];
+
+    unsafe {
+        doomgeneric_Create(3, argv.as_ptr());
+    }
 
     loop {
-        unsafe { doomgeneric_Create(1, argv.as_ptr()) };
+        unsafe {
+            doomgeneric_Tick();
+        };
+        crate::timer::sleep_ms(1);
     }
 }
 
 unsafe extern "C" {
     // This is the entry point for doomgeneric
     fn doomgeneric_Create(argc: i32, argv: *const *const i8);
+}
+
+unsafe extern "C" {
+    fn doomgeneric_Tick();
 }
 
 fn task_b() -> ! {

@@ -749,11 +749,13 @@ int	R_CheckTextureNumForName (char *name)
     // "NoTexture" marker.
     if (name[0] == '-')		
 	return 0;
-		
+	
+    DEH_printf("R_CheckTextureNumForName: looking for texture %s\n", DEH_String(name));
     key = W_LumpNameHash(name) % numtextures;
 
     texture=textures_hashtable[key]; 
     
+    DEH_printf("R_CheckTextureNumForName: hash key %d\n", key);
     while (texture != NULL)
     {
 	if (!strncasecmp (texture->name, name, 8) )
@@ -776,6 +778,7 @@ int	R_TextureNumForName (char* name)
 {
     int		i;
 	
+    DEH_printf("R_TextureNumForName: looking for texture %s\n", DEH_String(name));
     i = R_CheckTextureNumForName (name);
 
     if (i==-1)

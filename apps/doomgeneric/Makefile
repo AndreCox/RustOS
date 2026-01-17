@@ -1,15 +1,14 @@
-# Variables
-CC = clang
-AR = llvm-ar
-CFLAGS = --target=x86_64-unknown-none-elf -ffreestanding -mcmodel=kernel \
-         -mno-red-zone -O2 -nostdinc -fno-stack-protector -DNORMALUNIX \
-         -I. -I$(CLANG_INC)
-
+# --- Variables ---
+CC      = clang
+AR      = llvm-ar
 # Get Clang's internal headers for stdarg.h and stdint.h
-CLANG_INC = $(shell clang -print-resource-dir)/include
-CFLAGS += -I. -I$(CLANG_INC)
+CLANG_INC := $(shell $(CC) -print-resource-dir)/include
 
-# List of files to compile (stripped of X11/Linux specific ones)
+CFLAGS  = --target=x86_64-unknown-none-elf -ffreestanding -mcmodel=kernel \
+          -mno-red-zone -O2 -nostdinc -fno-stack-protector -DNORMALUNIX \
+          -I. -I$(CLANG_INC) -include kernel_compat.h
+
+# --- Source Files ---
 SRC = am_map.c doomdef.c doomstat.c dstrings.c d_event.c d_items.c d_iwad.c \
       d_loop.c d_main.c d_mode.c d_net.c f_finale.c f_wipe.c g_game.c \
       hu_lib.c hu_stuff.c info.c i_cdmus.c i_endoom.c i_joystick.c \
@@ -24,14 +23,21 @@ SRC = am_map.c doomdef.c doomstat.c dstrings.c d_event.c d_items.c d_iwad.c \
       z_zone.c w_file_stdc.c i_input.c i_video.c doomgeneric.c
 
 OBJS = $(SRC:.c=.o)
+LIB_OUT = ../../libs/libdoom.a
+
+# --- Rules ---
+
+.PHONY: all clean
 
 all: libdoom.a
 
 libdoom.a: $(OBJS)
 	$(AR) rcs $@ $(OBJS)
+	mkdir -p ../../libs
+	cp $@ $(LIB_OUT)
 
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
-	rm -f *.o libdoom.a
+	rm -f $(OBJS) libdoom.a

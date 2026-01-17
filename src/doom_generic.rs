@@ -4,28 +4,57 @@ use core::ffi::{CStr, c_char, c_int, c_void};
 static WAD_DATA: &[u8] = include_bytes!("../assets/data/DOOM.WAD");
 static mut WAD_CURSOR: usize = 0;
 
+static mut FAKE_SCREEN: [u32; 320 * 200] = [0u32; 320 * 200];
+
 #[unsafe(no_mangle)]
-pub extern "C" fn DG_Init() {
-    println!("[DOOM] DG_Init");
+pub static mut dg_screenBuffer: *mut u32 = core::ptr::null_mut();
+#[unsafe(no_mangle)]
+pub static mut dg_width: i32 = 320;
+#[unsafe(no_mangle)]
+pub static mut dg_height: i32 = 200;
+
+use core::ptr::{addr_of_mut, read_volatile, write_volatile};
+
+static mut FRAME_COUNT: u64 = 0; // Move this out of the function
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn DG_Init() {
+    crate::println!("[DOOM] DG_Init - Using addr_of_mut!");
+    dg_width = 320;
+    dg_height = 200;
+
+    // This is the magic "raw" way to get the pointer
+    dg_screenBuffer = addr_of_mut!(FAKE_SCREEN) as *mut u32;
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn DG_DrawFrame() {
-    // We'll hook this to your compositor soon!
+pub unsafe extern "C" fn DG_DrawFrame() {
+    crate::println!("DG_DrawFrame called!");
+    // Accessing FRAME_COUNT using volatile read/write to avoid references
+    let current_count = read_volatile(addr_of_mut!(FRAME_COUNT));
+    let next_count = current_count + 1;
+    write_volatile(addr_of_mut!(FRAME_COUNT), next_count);
+
+    if next_count % 35 == 0 {
+        crate::println!("[DOOM] Heartbeat: Game is running (Frame {})", next_count);
+    }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn DG_SleepMs(ms: u32) {
+    println!("[DOOM] DG_SleepMs called for {} ms", ms);
     crate::timer::sleep_ms(ms as u64);
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn DG_GetTicksMs() -> u32 {
+    println!("[DOOM] DG_GetTicksMs called");
     crate::timer::get_uptime_ms() as u32
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn DG_GetKey(_pressed: *mut i32, _key: *mut i32) -> i32 {
+    println!("[DOOM] DG_GetKey called - no key available");
     0
 }
 

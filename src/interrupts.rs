@@ -188,6 +188,12 @@ pub extern "C" fn exception_handler(frame: &InterruptStackFrame) -> u64 {
         serial_println!("R13: {:#x}", frame.r13);
         serial_println!("R14: {:#x}", frame.r14);
         serial_println!("R15: {:#x}", frame.r15);
+
+        // update the serial output before halting
+        while let Some(byte) = crate::io::log_buffer::SERIAL_QUEUE.pop_char() {
+            crate::io::serial::serial_write_byte(byte);
+        }
+
         hcf(); // Halt the system
     }
 

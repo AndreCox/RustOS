@@ -76,104 +76,13 @@ pub unsafe extern "C" fn puts(_s: *const c_char) -> i32 {
 }
 
 #[unsafe(no_mangle)]
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn snprintf(
     s: *mut c_char,
-    n: usize, // DON'T IGNORE THIS!
+    n: usize,
     fmt: *const c_char,
     mut args: ...
 ) -> i32 {
-    if s.is_null() || fmt.is_null() || n == 0 {
-        return -1;
-    }
-
-    let mut va = args;
-    let fmt_bytes = CStr::from_ptr(fmt).to_bytes();
-    let mut write_ptr = s;
-    let mut written = 0usize;
-
-    let mut i = 0;
-    while i < fmt_bytes.len() && written < n - 1 {
-        // Leave room for null terminator
-        if fmt_bytes[i] == b'%' && i + 1 < fmt_bytes.len() {
-            i += 1;
-            match fmt_bytes[i] {
-                b's' => {
-                    let src_ptr = va.arg::<*const c_char>();
-                    if !src_ptr.is_null() {
-                        let src = CStr::from_ptr(src_ptr).to_bytes();
-                        for &b in src {
-                            if written >= n - 1 {
-                                break;
-                            }
-                            write_ptr.write(b as c_char);
-                            write_ptr = write_ptr.add(1);
-                            written += 1;
-                        }
-                    }
-                }
-                b'd' | b'i' => {
-                    // Format integer to string
-                    let val = va.arg::<i32>();
-                    let mut buf = [0u8; 16];
-                    let mut temp_written = 0;
-
-                    // Simple integer to string conversion
-                    let is_neg = val < 0;
-                    let mut abs_val = if is_neg {
-                        val.wrapping_neg() as u32
-                    } else {
-                        val as u32
-                    };
-
-                    if abs_val == 0 {
-                        buf[temp_written] = b'0';
-                        temp_written += 1;
-                    } else {
-                        let mut digits = [0u8; 16];
-                        let mut digit_count = 0;
-                        while abs_val > 0 {
-                            digits[digit_count] = (abs_val % 10) as u8 + b'0';
-                            abs_val /= 10;
-                            digit_count += 1;
-                        }
-                        if is_neg {
-                            buf[temp_written] = b'-';
-                            temp_written += 1;
-                        }
-                        for j in (0..digit_count).rev() {
-                            buf[temp_written] = digits[j];
-                            temp_written += 1;
-                        }
-                    }
-
-                    for j in 0..temp_written {
-                        if written >= n - 1 {
-                            break;
-                        }
-                        write_ptr.write(buf[j] as c_char);
-                        write_ptr = write_ptr.add(1);
-                        written += 1;
-                    }
-                }
-                _ => {
-                    if written < n - 1 {
-                        write_ptr.write(fmt_bytes[i] as c_char);
-                        write_ptr = write_ptr.add(1);
-                        written += 1;
-                    }
-                }
-            }
-        } else {
-            write_ptr.write(fmt_bytes[i] as c_char);
-            write_ptr = write_ptr.add(1);
-            written += 1;
-        }
-        i += 1;
-    }
-
-    write_ptr.write(0); // Null terminator
-    written as i32
+    vsnprintf(s, n, fmt, args)
 }
 
 #[unsafe(no_mangle)]
@@ -425,14 +334,72 @@ pub unsafe extern "C" fn strstr(haystack: *const c_char, needle: *const c_char) 
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn vsnprintf(
-    _s: *mut c_char,
-    _n: usize,
+    s: *mut c_char,
+    n: usize,
     fmt: *const c_char,
-    mut args: VaList, // <--- args is ALREADY a VaList here
+    mut args: VaList,
 ) -> i32 {
-    // 1. Pass it directly by reference
-    format_print(fmt, &mut args);
-    0
+    let fmt_bytes = CStr::from_ptr(fmt).to_bytes();
+    let mut write_idx = 0;
+    let mut i = 0;
+
+    while i < fmt_bytes.len() && write_idx < n - 1 {
+        if fmt_bytes[i] == b'%' && i + 1 < fmt_bytes.len() {
+            i += 1;
+            match fmt_bytes[i] {
+                b's' => {
+                    let arg_ptr = args.arg::<*const c_char>();
+                    if !arg_ptr.is_null() {
+                        let arg_str = CStr::from_ptr(arg_ptr).to_bytes();
+                        for &b in arg_str {
+                            if write_idx < n - 1 {
+                                s.add(write_idx).write(b as c_char);
+                                write_idx += 1;
+                            }
+                        }
+                    }
+                }
+                b'i' | b'd' => {
+                    let val = args.arg::<i32>();
+                    let mut buf = [0u8; 12];
+                    let mut curr = 11;
+                    let is_neg = val < 0;
+                    let mut v = if is_neg { -val as u32 } else { val as u32 };
+
+                    if v == 0 {
+                        buf[curr] = b'0';
+                        curr -= 1;
+                    } else {
+                        while v > 0 {
+                            buf[curr] = (b'0' + (v % 10) as u8);
+                            v /= 10;
+                            curr -= 1;
+                        }
+                    }
+                    if is_neg {
+                        buf[curr] = b'-';
+                        curr -= 1;
+                    }
+                    for b in &buf[curr + 1..12] {
+                        if write_idx < n - 1 {
+                            s.add(write_idx).write(*b as c_char);
+                            write_idx += 1;
+                        }
+                    }
+                }
+                _ => {
+                    s.add(write_idx).write(fmt_bytes[i] as c_char);
+                    write_idx += 1;
+                }
+            }
+        } else {
+            s.add(write_idx).write(fmt_bytes[i] as c_char);
+            write_idx += 1;
+        }
+        i += 1;
+    }
+    s.add(write_idx).write(0); // CRITICAL: Null terminator
+    write_idx as i32
 }
 // --- SYSTEM & FILE MGMT ---
 
