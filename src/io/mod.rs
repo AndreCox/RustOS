@@ -58,6 +58,7 @@ macro_rules! screen_println {
 pub fn _dual_print(args: fmt::Arguments) {
     log_buffer::_log_print(args, log_buffer::LogTarget::Both);
 }
+
 #[macro_export]
 macro_rules! print {
     ($($arg:tt)*) => {

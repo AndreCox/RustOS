@@ -1,3 +1,4 @@
+pub mod c_mem_bridge;
 pub mod frame;
 mod heap;
 pub mod paging;
@@ -14,7 +15,7 @@ pub fn init() {
 }
 
 pub fn sys_sbrk(increment: isize) -> *mut u8 {
-    let heap_size = ALLOCATOR.lock().size();
+    let heap_size = ALLOCATOR.0.lock().size();
     let old_end_of_heap = HEAP_START + heap_size as u64;
 
     if increment == 0 {
@@ -37,7 +38,7 @@ pub fn sys_sbrk(increment: isize) -> *mut u8 {
         }
 
         unsafe {
-            ALLOCATOR.lock().extend(increment as usize);
+            ALLOCATOR.0.lock().extend(increment as usize);
         }
     }
 

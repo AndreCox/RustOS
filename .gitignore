@@ -3,3 +3,5 @@
 Cargo.lock
 RustOS.iso
 *.log
+*.WAD
+*.wad

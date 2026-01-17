@@ -60,7 +60,7 @@ clean:
 
 # 4. Shortcut to build and run in QEMU
 run: $(ISO)
-	qemu-system-x86_64 -cdrom $(ISO) -m 512M -serial stdio
+	qemu-system-x86_64 -cdrom $(ISO) -m 1G -serial stdio
 
 .PHONY: debug
 debug: $(ISO)

@@ -1,11 +1,11 @@
 #![no_std] // Indicate that we are not using the standard library
 #![no_main] // Indicate that we are not using the standard main function
 #![feature(alloc_error_handler)]
+#![feature(c_variadic)]
 
 extern crate alloc; // Import the alloc crate for heap allocations
 
 // Enable rust libraries
-use alloc::vec::Vec;
 use core::alloc::Layout;
 use core::arch::asm;
 use core::panic::PanicInfo;
@@ -14,6 +14,8 @@ use limine::request::HhdmRequest;
 use limine::{BaseRevision, request::FramebufferRequest};
 
 // Import modules
+mod c_bridge; // C bridge for using standard C functions
+mod doom_generic;
 mod globals;
 mod helpers;
 mod interrupts;
@@ -151,13 +153,14 @@ pub extern "C" fn kmain() -> ! {
     let t2 = crate::multitasker::task::Task::new(2, task_b as u64);
     let _compositor_task =
         crate::multitasker::task::Task::new(3, crate::screen::compositor_task as u64);
+    let doom_task = crate::multitasker::task::Task::new(4, task_doom as u64);
 
     let mut sched = crate::multitasker::scheduler::SCHEDULER.lock();
     if let Some(ref mut scheduler) = *sched {
         scheduler.add_task(idle_task);
         scheduler.add_task(_compositor_task);
+        scheduler.add_task(doom_task);
         // scheduler.add_task(t1);
-        scheduler.add_task(t2);
     }
     drop(sched);
 
@@ -183,32 +186,91 @@ pub extern "C" fn kmain() -> ! {
 
 fn task_a() -> ! {
     loop {
-        let cpu_percent = interrupts::get_cpu_usage();
-        println!("CPU Usage: {}%", cpu_percent);
-        println!("Task A is running.");
         timer::sleep_ms(1000);
+        println!(
+            "Current Heap Usage: {} KB",
+            crate::memory::get_heap_usage() / 1024
+        );
     }
+}
+
+fn task_doom() -> ! {
+    println!("Starting DOOM!");
+    timer::sleep_ms(500);
+
+    println!(
+        "Initial Heap Usage: {} KB",
+        crate::memory::get_heap_usage() / 1024
+    );
+    let arg0 = b"doomgeneric\0".as_ptr() as *const i8;
+    let argv = [arg0];
+
+    loop {
+        unsafe { doomgeneric_Create(1, argv.as_ptr()) };
+    }
+}
+
+unsafe extern "C" {
+    // This is the entry point for doomgeneric
+    fn doomgeneric_Create(argc: i32, argv: *const *const i8);
 }
 
 fn task_b() -> ! {
     loop {
-        println!("--- Recycling Test ---");
+        println!("--- Dynamic Growth & Recycling Test ---");
 
-        println!("Initial usage: {} KB", memory::get_heap_usage() / 1024);
-        sleep_ms(1000);
+        let initial_size = crate::memory::get_heap_size() / 1024;
+        println!("Initial Heap Total Size: {} KB", initial_size);
+        println!(
+            "Initial Heap Usage: {} KB",
+            crate::memory::get_heap_usage() / 1024
+        );
+
+        timer::sleep_ms(2000);
+
         {
-            let temp_vec: Vec<u64> = alloc::vec::Vec::with_capacity(50 * 1024 * 1024 / 8); // 50MB
-            println!("Usage with Vec: {} KB", memory::get_heap_usage() / 1024);
-            sleep_ms(1000);
-        } // <--- temp_vec is DROPPED here
+            println!("Creating a Vec and pushing data to force growth...");
+            let mut dynamic_vec = alloc::vec::Vec::new();
 
-        println!("Usage after drop: {} KB", memory::get_heap_usage() / 1024);
+            // We will push 200MB worth of data.
+            // Since your initial heap is 128MB, this MUST trigger sys_sbrk.
+            let target_elements = (200 * 1024 * 1024) / 8;
 
-        // If the "after drop" size is back to roughly the "Initial" size,
-        // then Rust is successfully freeing your memory!
+            for i in 0..target_elements {
+                dynamic_vec.push(i as u64);
 
-        loop {
-            sleep_ms(10000);
+                // Print every time we cross a 40MB threshold
+                if i % (40 * 1024 * 1024 / 8) == 0 && i > 0 {
+                    println!(
+                        "  Progress: {} MB | Heap Size: {} KB | Usage: {} KB",
+                        (i * 8) / (1024 * 1024),
+                        crate::memory::get_heap_size() / 1024,
+                        crate::memory::get_heap_usage() / 1024
+                    );
+                }
+            }
+
+            println!(
+                "Final size reached. Vec capacity is now: {} bytes",
+                dynamic_vec.capacity() * 8
+            );
+        } // <--- Vec is dropped here. 
+
+        println!("--- Vec Dropped ---");
+        let after_drop_usage = crate::memory::get_heap_usage() / 1024;
+        let after_drop_size = crate::memory::get_heap_size() / 1024;
+
+        println!("Heap Usage after drop: {} KB", after_drop_usage);
+        println!(
+            "Heap Total Size (should stay large): {} KB",
+            after_drop_size
+        );
+
+        if after_drop_usage < initial_size {
+            println!("SUCCESS: Memory was recycled and is ready for DOOM!");
         }
+
+        println!("Waiting 10 seconds before restarting test...");
+        timer::sleep_ms(10000);
     }
 }
