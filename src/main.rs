@@ -208,7 +208,6 @@ fn task_doom() -> ! {
         unsafe {
             doomgeneric_Tick();
         };
-        crate::timer::sleep_ms(1);
     }
 }
 

@@ -359,6 +359,55 @@ pub unsafe extern "C" fn vsnprintf(
                         }
                     }
                 }
+                b'.' | b'0'..=b'9' => {
+                    let mut precision = 0;
+                    // Simple parser for %.3d or %03d
+                    if fmt_bytes[i] == b'.' {
+                        i += 1;
+                        while i < fmt_bytes.len() && fmt_bytes[i].is_ascii_digit() {
+                            precision = precision * 10 + (fmt_bytes[i] - b'0') as usize;
+                            i += 1;
+                        }
+                    } else if fmt_bytes[i] == b'0' {
+                        // Handle %03d style
+                        while i < fmt_bytes.len() && fmt_bytes[i].is_ascii_digit() {
+                            precision = precision * 10 + (fmt_bytes[i] - b'0') as usize;
+                            i += 1;
+                        }
+                    }
+
+                    if i < fmt_bytes.len() && (fmt_bytes[i] == b'd' || fmt_bytes[i] == b'i') {
+                        let val = args.arg::<i32>();
+                        let mut buf = [0u8; 12];
+                        let mut curr = 11;
+                        let mut v = val.abs() as u32;
+
+                        // Standard number conversion
+                        if v == 0 && precision == 0 { /* output nothing? or '0'? DOOM usually wants '0' */
+                        }
+
+                        while v > 0 || (11 - curr) < precision {
+                            buf[curr] = (b'0' + (v % 10) as u8);
+                            v /= 10;
+                            curr -= 1;
+                            if curr == 0 {
+                                break;
+                            } // Safety
+                        }
+
+                        if val < 0 {
+                            buf[curr] = b'-';
+                            curr -= 1;
+                        }
+
+                        for b in &buf[curr + 1..12] {
+                            if write_idx < n - 1 {
+                                s.add(write_idx).write(*b as c_char);
+                                write_idx += 1;
+                            }
+                        }
+                    }
+                }
                 b'i' | b'd' => {
                     let val = args.arg::<i32>();
                     let mut buf = [0u8; 12];

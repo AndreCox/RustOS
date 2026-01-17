@@ -30,7 +30,7 @@ pub struct FramebufferWriter<'a> {
     // Flag to indicate we need to copy to hardware
     needs_hw_update: AtomicBool,
 
-    pitch: u64,
+    pub pitch: u64,
     pub width: u64,
     pub height: u64,
     cursor_x: u64,
@@ -68,7 +68,7 @@ impl<'a> FramebufferWriter<'a> {
 
     /// Mark a vertical range as dirty so it gets copied to GPU next frame
     #[inline]
-    fn mark_dirty(&mut self, y: u64, height: u64) {
+    pub fn mark_dirty(&mut self, y: u64, height: u64) {
         let y_start = y as usize;
         let y_end = (y + height) as usize;
 
