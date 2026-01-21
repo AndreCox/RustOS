@@ -148,19 +148,20 @@ pub extern "C" fn kmain() -> ! {
     multitasker::init_multitasking();
     println!("Multitasking setup complete.");
 
-    let idle_task = crate::multitasker::task::Task::new(0, crate::multitasker::idle_task as u64);
-    let t1 = crate::multitasker::task::Task::new(1, task_a as u64);
-    let t2 = crate::multitasker::task::Task::new(2, task_b as u64);
+    let idle_task =
+        crate::multitasker::task::Task::new(0, crate::multitasker::idle_task as *const () as u64);
     let _compositor_task =
-        crate::multitasker::task::Task::new(3, crate::screen::compositor_task as u64);
-    let doom_task = crate::multitasker::task::Task::new(4, task_doom as u64);
+        crate::multitasker::task::Task::new(3, crate::screen::compositor_task as *const () as u64);
+    let doom_task = crate::multitasker::task::Task::new(4, task_doom as *const () as u64);
+    let task_a: multitasker::task::Task =
+        crate::multitasker::task::Task::new(5, task_a as *const () as u64);
 
     let mut sched = crate::multitasker::scheduler::SCHEDULER.lock();
     if let Some(ref mut scheduler) = *sched {
         scheduler.add_task(idle_task);
         scheduler.add_task(_compositor_task);
         scheduler.add_task(doom_task);
-        // scheduler.add_task(t1);
+        // scheduler.add_task(task_a);
     }
     drop(sched);
 
@@ -174,13 +175,13 @@ pub extern "C" fn kmain() -> ! {
         asm!("sti"); // Enable interrupts
     }
     loop {
-        while let Some(scancode) = SCANCODE_QUEUE.pop() {
-            if let Some(character) = scancode_to_char(scancode) {
-                print!("{}", character);
-            }
-        }
+        // while let Some(scancode) = SCANCODE_QUEUE.pop() {
+        //     if let Some(character) = scancode_to_char(scancode) {
+        //         print!("{}", character);
+        //     }
+        // }
 
-        crate::timer::sleep_ms(16); // Prevent busy waiting
+        crate::multitasker::yield_now();
     }
 }
 
@@ -212,70 +213,16 @@ fn task_doom() -> ! {
 }
 
 unsafe extern "C" {
-    // This is the entry point for doomgeneric
-    fn doomgeneric_Create(argc: i32, argv: *const *const i8);
-}
-
-unsafe extern "C" {
     fn doomgeneric_Tick();
+    fn doomgeneric_Create(argc: i32, argv: *const *const i8) -> i32;
 }
 
 fn task_b() -> ! {
-    loop {
-        println!("--- Dynamic Growth & Recycling Test ---");
-
-        let initial_size = crate::memory::get_heap_size() / 1024;
-        println!("Initial Heap Total Size: {} KB", initial_size);
-        println!(
-            "Initial Heap Usage: {} KB",
-            crate::memory::get_heap_usage() / 1024
-        );
-
-        timer::sleep_ms(2000);
-
-        {
-            println!("Creating a Vec and pushing data to force growth...");
-            let mut dynamic_vec = alloc::vec::Vec::new();
-
-            // We will push 200MB worth of data.
-            // Since your initial heap is 128MB, this MUST trigger sys_sbrk.
-            let target_elements = (200 * 1024 * 1024) / 8;
-
-            for i in 0..target_elements {
-                dynamic_vec.push(i as u64);
-
-                // Print every time we cross a 40MB threshold
-                if i % (40 * 1024 * 1024 / 8) == 0 && i > 0 {
-                    println!(
-                        "  Progress: {} MB | Heap Size: {} KB | Usage: {} KB",
-                        (i * 8) / (1024 * 1024),
-                        crate::memory::get_heap_size() / 1024,
-                        crate::memory::get_heap_usage() / 1024
-                    );
-                }
-            }
-
-            println!(
-                "Final size reached. Vec capacity is now: {} bytes",
-                dynamic_vec.capacity() * 8
-            );
-        } // <--- Vec is dropped here. 
-
-        println!("--- Vec Dropped ---");
-        let after_drop_usage = crate::memory::get_heap_usage() / 1024;
-        let after_drop_size = crate::memory::get_heap_size() / 1024;
-
-        println!("Heap Usage after drop: {} KB", after_drop_usage);
-        println!(
-            "Heap Total Size (should stay large): {} KB",
-            after_drop_size
-        );
-
-        if after_drop_usage < initial_size {
-            println!("SUCCESS: Memory was recycled and is ready for DOOM!");
-        }
-
-        println!("Waiting 10 seconds before restarting test...");
-        timer::sleep_ms(10000);
+    // do an illegal instruction to test task killing
+    timer::sleep_ms(2000);
+    println!("Task B: About to execute illegal instruction...");
+    unsafe {
+        asm!("ud2");
     }
+    loop {}
 }

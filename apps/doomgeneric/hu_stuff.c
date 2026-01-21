@@ -290,7 +290,6 @@ void HU_Init(void)
     int		j;
     char	buffer[9];
 
-    DEH_printf("HU_Init: Initializing heads-up display\n");
     // load the heads-up font
     j = HU_FONTSTART;
     for (i=0;i<HU_FONTSIZE;i++)
@@ -298,8 +297,6 @@ void HU_Init(void)
 	DEH_snprintf(buffer, 9, "STCFN%.3d", j++);
 	hu_font[i] = (patch_t *) W_CacheLumpName(buffer, PU_STATIC);
     }
-
-    DEH_printf("HU_Init: Heads-up display initialized\n");
 
 }
 

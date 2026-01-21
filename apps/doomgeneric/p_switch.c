@@ -135,9 +135,6 @@ void P_InitSwitchList(void)
 	    
 	    value = R_TextureNumForName(alphSwitchList[i].name1);
 #endif
-		DEH_printf("Switch texture: %s <-> %s\n",
-		       DEH_String(alphSwitchList[i].name1),
-		       DEH_String(alphSwitchList[i].name2));
 	    switchlist[index++] = R_TextureNumForName(DEH_String(alphSwitchList[i].name1));
 	    switchlist[index++] = R_TextureNumForName(DEH_String(alphSwitchList[i].name2));
 	}

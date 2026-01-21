@@ -28,6 +28,8 @@
 #include "d_event.h"
 #include "i_joystick.h"
 #include "i_system.h"
+#include "deh_main.h"
+
 
 #include "m_config.h"
 #include "m_misc.h"
@@ -340,6 +342,7 @@ void I_BindJoystickVariables(void)
 {
     int i;
 
+   
     M_BindVariable("use_joystick",          &usejoystick);
     M_BindVariable("joystick_index",        &joystick_index);
     M_BindVariable("joystick_x_axis",       &joystick_x_axis);

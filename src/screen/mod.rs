@@ -41,3 +41,15 @@ pub fn compositor_task() -> ! {
         crate::timer::sleep_ms(16);
     }
 }
+
+pub fn enter_exclusive_mode() {
+    EXCLUSIVE_GRAPHICS.store(true, Ordering::SeqCst);
+}
+
+pub fn exit_exclusive_mode() {
+    EXCLUSIVE_GRAPHICS.store(false, Ordering::SeqCst);
+}
+
+pub fn is_exclusive_mode() -> bool {
+    EXCLUSIVE_GRAPHICS.load(Ordering::SeqCst)
+}

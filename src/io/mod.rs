@@ -62,7 +62,7 @@ pub fn _dual_print(args: fmt::Arguments) {
 #[macro_export]
 macro_rules! print {
     ($($arg:tt)*) => {
-        $crate::io::_dual_print(format_args!($($arg)*));
+        $crate::io::_dual_print(format_args!($($arg)*))
     };
 }
 

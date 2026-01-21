@@ -1,12 +1,39 @@
 use crate::alloc::alloc::{Layout, alloc};
 
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
+pub enum TaskStatus {
+    Ready,
+    Running,
+    Killed, // The "Crashing" state
+    Waiting,
+}
+
+#[repr(align(16))]
+#[derive(Debug, Clone)]
+pub struct FpuState {
+    pub data: [u8; 512],
+}
+
+impl Default for FpuState {
+    fn default() -> Self {
+        let mut data = [0u8; 512];
+        // Minimal initialization for FXSAVE format:
+        // Set MXCSR to default value (0x1f80) to avoid floating point exceptions
+        data[24..28].copy_from_slice(&0x1f80u32.to_le_bytes());
+        FpuState { data }
+    }
+}
+
 pub struct Task {
     pub id: u64,
     pub stack_pointer: u64,
     pub wake_at: u64,
+    pub status: TaskStatus,
+    pub fpu_state: FpuState,
 }
 
 #[repr(C)]
+#[derive(Default)]
 struct TaskContext {
     r15: u64,
     r14: u64,
@@ -36,41 +63,30 @@ struct TaskContext {
 
 impl Task {
     pub fn new(id: u64, entry_point: u64) -> Self {
-        let stack_size = 4096 * 4; // 16 KiB stack
+        let stack_size = 1024 * 4; // 16 KB
         let layout = Layout::from_size_align(stack_size, 16).unwrap();
-
         let stack_base = unsafe { alloc(layout) } as u64;
         let stack_top = stack_base + stack_size as u64;
 
-        let context_ptr =
-            (stack_top - core::mem::size_of::<TaskContext>() as u64) as *mut TaskContext;
+        let aligned_top = stack_top & !0xF;
+
+        let context_size = core::mem::size_of::<TaskContext>() as u64;
+
+        let context_ptr = (aligned_top - context_size) as *mut TaskContext;
 
         unsafe {
             context_ptr.write(TaskContext {
-                r15: 0,
-                r14: 0,
-                r13: 0,
-                r12: 0,
-                r11: 0,
-                r10: 0,
-                r9: 0,
-                r8: 0,
-                rbp: 0,
-                rdi: 0,
-                rsi: 0,
-                rdx: 0,
-                rcx: 0,
-                rbx: 0,
-                rax: 0,
+                rbp: aligned_top,
 
-                interrupt_number: 0,
-                error_code: 0,
+                instruction_pointer: entry_point,
+                code_segment: 0x28,
+                cpu_flags: 0x202,
 
-                instruction_pointer: entry_point as u64,
-                code_segment: 0x28,       // Your Kernel Code Segment
-                cpu_flags: 0x202,         // Interrupts enabled (IF bit)
-                stack_pointer: stack_top, // Original top of stack
-                stack_segment: 0x30,      // Your Kernel Data Segment
+                // When iretq finishes, RSP will be set to this value.
+                // It must be abi_compliant_top so the function starts with (RSP % 16) == 8.
+                stack_pointer: aligned_top,
+                stack_segment: 0x30,
+                ..Default::default()
             });
         }
 
@@ -78,6 +94,8 @@ impl Task {
             id,
             stack_pointer: context_ptr as u64,
             wake_at: 0,
+            status: TaskStatus::Ready,
+            fpu_state: FpuState::default(),
         }
     }
 }

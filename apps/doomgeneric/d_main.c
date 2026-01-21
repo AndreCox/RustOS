@@ -341,12 +341,13 @@ void D_BindVariables(void)
     I_BindVideoVariables();
     I_BindJoystickVariables();
     I_BindSoundVariables();
-
     M_BindBaseControls();
     M_BindWeaponControls();
     M_BindMapControls();
     M_BindMenuControls();
+    M_BindMenuControls();
     M_BindChatControls(MAXPLAYERS);
+
 
     key_multi_msgplayer[0] = HUSTR_KEYGREEN;
     key_multi_msgplayer[1] = HUSTR_KEYINDIGO;
@@ -1357,6 +1358,7 @@ void D_DoomMain (void)
     DEH_printf("M_LoadDefaults: Load system defaults.\n");
     M_SetConfigFilenames("default.cfg", PROGRAM_PREFIX "doom.cfg");
     D_BindVariables();
+    DEH_printf("M_LoadDefaults: Load configuration files.\n");
     M_LoadDefaults();
 
     // Save configuration at exit.

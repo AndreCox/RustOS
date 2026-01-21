@@ -24,25 +24,19 @@ impl LogQueue {
     }
 
     pub fn push_char(&self, c: u8) {
-        loop {
-            let h = self.head.load(Ordering::Relaxed);
-            let next = (h + 1) % LOG_BUFFER_SIZE;
+        let h = self.head.load(Ordering::Relaxed);
+        let next = (h + 1) % LOG_BUFFER_SIZE;
 
-            if next == self.tail.load(Ordering::Acquire) {
-                return; // Buffer full
-            }
-
-            // Claim the slot FIRST
-            if self
-                .head
-                .compare_exchange_weak(h, next, Ordering::SeqCst, Ordering::Relaxed)
-                .is_ok()
-            {
-                // Write the data into the claimed slot
-                self.buffer[h].store(c, Ordering::Release);
-                break;
-            }
+        // If full, move the tail forward to make room (Overwrite Mode)
+        if next == self.tail.load(Ordering::Acquire) {
+            let t = self.tail.load(Ordering::Relaxed);
+            self.tail
+                .store((t + 1) % LOG_BUFFER_SIZE, Ordering::Release);
         }
+
+        // Write the data
+        self.buffer[h].store(c, Ordering::Release);
+        self.head.store(next, Ordering::Release);
     }
 
     pub fn pop_char(&self) -> Option<u8> {

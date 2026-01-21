@@ -141,6 +141,11 @@ impl<'a> FramebufferWriter<'a> {
         self.mark_dirty(y, font_h as u64);
     }
 
+    pub fn clear_screen(&mut self) {
+        self.buffer.fill(0);
+        self.mark_dirty(0, self.height);
+    }
+
     pub fn draw_string_at(&mut self, s: &str, x: u64, y: u64, color: u32) {
         let mut local_x = x;
         for c in s.chars() {

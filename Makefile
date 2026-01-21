@@ -65,11 +65,11 @@ run: $(ISO)
 .PHONY: debug
 debug: $(ISO)
 	@echo "==> Starting QEMU in debug mode..."
-	qemu-system-x86_64 -cdrom $(ISO) -m 512M -serial stdio -s -S & \
+	qemu-system-x86_64 -cdrom $(ISO) -m 1G -serial stdio -s -S & \
 	sleep 1; \
 	$(GDB) $(KERNEL) -ex "target remote :1234" -ex "layout src" -ex "continue"
 
 .PHONY: debug-qemu-only
 debug-qemu-only: $(ISO)
 	@echo "==> Starting QEMU in debug mode (waiting for GDB...)"
-	qemu-system-x86_64 -cdrom $(ISO) -m 512M -serial stdio -s -S
+	qemu-system-x86_64 -cdrom $(ISO) -m 1G -serial stdio -s -S

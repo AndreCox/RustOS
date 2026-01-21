@@ -9,6 +9,8 @@ pub fn init_multitasking() {
         id: 0,
         stack_pointer: 0, // Will be set during the first context switch
         wake_at: 0,
+        status: task::TaskStatus::Ready,
+        fpu_state: task::FpuState::default(),
     };
 
     new_scheduler.current_task = Some(main_task);

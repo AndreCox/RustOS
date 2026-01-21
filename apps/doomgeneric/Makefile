@@ -1,43 +1,74 @@
-# --- Variables ---
-CC      = clang
-AR      = llvm-ar
+################################################################
+#
+# $Id:$
+#
+# $Log:$
+#
+ifeq ($(V),1)
+    VB=''
+else
+    VB=@
+endif
+
+CC=clang
+AR=llvm-ar
+
 # Get Clang's internal headers for stdarg.h and stdint.h
 CLANG_INC := $(shell $(CC) -print-resource-dir)/include
 
-CFLAGS  = --target=x86_64-unknown-none-elf -ffreestanding -mcmodel=kernel \
-          -mno-red-zone -O2 -nostdinc -fno-stack-protector -DNORMALUNIX \
-          -I. -I$(CLANG_INC) -include kernel_compat.h
+# CFLAGS+= --target=x86_64-unknown-none-elf -ffreestanding -mcmodel=large \
+#          -mno-red-zone -O2 -nostdinc -fno-stack-protector \
+#          -fno-pic -fno-pie \
+#          -I. -I$(CLANG_INC) -include kernel_compat.h
+# CFLAGS += -I./include
 
-# --- Source Files ---
-SRC = am_map.c doomdef.c doomstat.c dstrings.c d_event.c d_items.c d_iwad.c \
-      d_loop.c d_main.c d_mode.c d_net.c f_finale.c f_wipe.c g_game.c \
-      hu_lib.c hu_stuff.c info.c i_cdmus.c i_endoom.c i_joystick.c \
-      i_scale.c i_sound.c i_system.c i_timer.c memio.c m_argv.c m_bbox.c \
-      m_cheat.c m_config.c m_controls.c m_fixed.c m_menu.c m_misc.c \
-      m_random.c p_ceilng.c p_doors.c p_enemy.c p_floor.c p_inter.c \
-      p_lights.c p_map.c p_maputl.c p_mobj.c p_plats.c p_pspr.c p_saveg.c \
-      p_setup.c p_sight.c p_spec.c p_switch.c p_telept.c p_tick.c p_user.c \
-      r_bsp.c r_data.c r_draw.c r_main.c r_plane.c r_segs.c r_sky.c \
-      r_things.c sha1.c sounds.c statdump.c st_lib.c st_stuff.c s_sound.c \
-      tables.c v_video.c wi_stuff.c w_checksum.c w_file.c w_main.c w_wad.c \
-      z_zone.c w_file_stdc.c i_input.c i_video.c doomgeneric.c
+CFLAGS+= --target=x86_64-unknown-none-elf -ffreestanding -mcmodel=kernel \
+         -mno-red-zone -O2 -nostdinc -fno-stack-protector \
+         -fno-pic -fno-pie \
+         -mno-sse -mno-mmx -mno-80387 \
+         -mstack-alignment=16  \
+         -I. -I$(CLANG_INC) -include kernel_compat.h -I./include
 
-OBJS = $(SRC:.c=.o)
-LIB_OUT = ../../libs/libdoom.a
+LDFLAGS+=-Wl,--gc-sections
 
-# --- Rules ---
+# Removed: -DNORMALUNIX -DLINUX -DSNDSERV -D_DEFAULT_SOURCE
+# Removed: -lm -lc -lX11
 
-.PHONY: all clean
+# subdirectory for objects
+OBJDIR=build
+OUTPUT=libdoom.a
+LIB_OUT=../../libs/libdoom.a
 
-all: libdoom.a
+SRC_DOOM = dummy.o am_map.o doomdef.o doomstat.o dstrings.o d_event.o d_items.o d_iwad.o d_loop.o d_main.o d_mode.o d_net.o f_finale.o f_wipe.o g_game.o hu_lib.o hu_stuff.o info.o i_cdmus.o i_endoom.o i_joystick.o i_scale.o i_sound.o i_system.o i_timer.o memio.o m_argv.o m_bbox.o m_cheat.o m_config.o m_controls.o m_fixed.o m_menu.o m_misc.o m_random.o p_ceilng.o p_doors.o p_enemy.o p_floor.o p_inter.o p_lights.o p_map.o p_maputl.o p_mobj.o p_plats.o p_pspr.o p_saveg.o p_setup.o p_sight.o p_spec.o p_switch.o p_telept.o p_tick.o p_user.o r_bsp.o r_data.o r_draw.o r_main.o r_plane.o r_segs.o r_sky.o r_things.o sha1.o sounds.o statdump.o st_lib.o st_stuff.o s_sound.o tables.o v_video.o wi_stuff.o w_checksum.o w_file.o w_main.o w_wad.o z_zone.o w_file_stdc.o i_input.o i_video.o doomgeneric.o
 
-libdoom.a: $(OBJS)
-	$(AR) rcs $@ $(OBJS)
-	mkdir -p ../../libs
-	cp $@ $(LIB_OUT)
+OBJS += $(addprefix $(OBJDIR)/, $(SRC_DOOM))
 
-%.o: %.c
-	$(CC) $(CFLAGS) -c $< -o $@
+all: $(OUTPUT)
 
 clean:
-	rm -f $(OBJS) libdoom.a
+	rm -rf $(OBJDIR)
+	rm -f $(OUTPUT)
+	rm -f $(LIB_OUT)
+
+$(OUTPUT): $(OBJS)
+	@echo [Creating static library $@]
+	$(VB)$(AR) rcs $@ $(OBJS)
+	@echo [Copying to libs directory]
+	$(VB)mkdir -p ../../libs
+	$(VB)cp $@ $(LIB_OUT)
+	@echo [Size]
+	-$(CROSS_COMPILE)size $(OUTPUT) 2>/dev/null || true
+
+$(OBJS): | $(OBJDIR)
+
+$(OBJDIR):
+	mkdir -p $(OBJDIR)
+
+$(OBJDIR)/%.o: %.c
+	@echo [Compiling $<]
+	$(VB)$(CC) $(CFLAGS) -c $< -o $@
+
+print:
+	@echo OBJS: $(OBJS)
+
+.PHONY: all clean print

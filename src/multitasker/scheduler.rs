@@ -1,6 +1,5 @@
 use super::task::Task;
 use crate::alloc::collections::VecDeque;
-use lazy_static::lazy_static;
 use spin::Mutex;
 
 pub struct Scheduler {
@@ -47,17 +46,37 @@ impl Scheduler {
 
         // 1. Save the state of the task that just finished
         if let Some(mut task) = self.current_task.take() {
-            task.stack_pointer = stack_pointer;
-            self.tasks.push_back(task);
+            if task.status == super::task::TaskStatus::Killed {
+                crate::println!("Scheduler: Reaping crashed task {}", task.id);
+                // DO NOT push_back. Let 'task' drop here to free its metadata.
+                // Note: You should ideally deallocate the stack memory here too.
+            } else {
+                task.stack_pointer = stack_pointer;
+                task.status = super::task::TaskStatus::Ready;
+
+                // SAVE SSE/FPU STATE
+                unsafe {
+                    core::arch::asm!("fxsave [{}]", in(reg) &mut task.fpu_state.data);
+                }
+
+                self.tasks.push_back(task);
+            }
         }
 
         // 2. Look for the next READY task
         // We loop through the queue to find someone who is awake.
         for _ in 0..self.tasks.len() {
-            if let Some(task) = self.tasks.pop_front() {
+            if let Some(mut task) = self.tasks.pop_front() {
                 if task.id == 0 || now >= task.wake_at {
                     // We found a task!
                     let next_sp = task.stack_pointer;
+                    task.status = super::task::TaskStatus::Running;
+
+                    // RESTORE SSE/FPU STATE
+                    unsafe {
+                        core::arch::asm!("fxrstor [{}]", in(reg) &task.fpu_state.data);
+                    }
+
                     self.current_task = Some(task);
                     return next_sp;
                 } else {

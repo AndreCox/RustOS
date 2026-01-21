@@ -1,72 +1,97 @@
-use crate::println;
 use core::ffi::{CStr, c_char, c_int, c_void};
-
-static WAD_DATA: &[u8] = include_bytes!("../assets/data/DOOM.WAD");
-static mut WAD_CURSOR: usize = 0;
-
-static mut DOOM_PALETTE: [u32; 256] = [0; 256];
-
-#[unsafe(no_mangle)]
-pub static mut dg_screenBuffer: *mut u32 = core::ptr::null_mut();
-#[unsafe(no_mangle)]
-pub static mut dg_width: i32 = 320;
-#[unsafe(no_mangle)]
-pub static mut dg_height: i32 = 200;
-
-use core::ptr::{addr_of_mut, read_volatile, write_volatile};
 use core::sync::atomic::Ordering;
 
-static mut FRAME_COUNT: u64 = 0; // Move this out of the function
+use crate::{io, println};
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn DG_Init() {
-    crate::println!("[DOOM] DG_Init - Using addr_of_mut!");
-    crate::screen::EXCLUSIVE_GRAPHICS.store(true, Ordering::SeqCst);
-    dg_width = 320;
-    dg_height = 200;
+// =============================================================================
+// DOOM MEMORY & CONFIG
+// =============================================================================
+
+unsafe extern "C" {
+    pub static mut DG_ScreenBuffer: *mut u32;
+    // We link these from C to avoid the "Duplicate Symbol" error
+    // but we must initialize them in DG_Init or task_doom!
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn DG_DrawFrame() {
-    unsafe extern "C" {
-        static DG_ScreenBuffer: *const u32;
-    }
+#[used]
+pub static mut DG_Width: i32 = 640;
 
+#[unsafe(no_mangle)]
+#[used]
+pub static mut DG_Height: i32 = 400;
+
+// The WAD data embedded in the kernel
+static WAD_DATA: &[u8] = include_bytes!("../assets/data/DOOM.WAD");
+static mut WAD_CURSOR: usize = 0;
+
+// A dummy buffer to act as the FILE struct.
+// This prevents segfaults if libc tries to read file flags/locks.
+static mut DUMMY_FILE_STRUCT: [u8; 128] = [0; 128];
+
+// =============================================================================
+// INITIALIZATION
+// =============================================================================
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn DG_Init() {
+    crate::println!("[DOOM] DG_Init - Starting...");
+
+    // Switch to Exclusive Graphics Mode
+    crate::screen::EXCLUSIVE_GRAPHICS.store(true, Ordering::SeqCst);
+
+    // Ensure dimensions are correct (Now 640x400 scaled from 320x200 by C side)
+    DG_Width = 640;
+    DG_Height = 400;
+}
+
+// =============================================================================
+// VIDEO & INPUT
+// =============================================================================
+use core::arch::x86_64::*;
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn DG_DrawFrame() {
     if DG_ScreenBuffer.is_null() {
         return;
     }
 
-    if let Some(mut guard) = crate::screen::renderer::WRITER.try_lock() {
-        if let Some(writer) = guard.as_mut() {
-            let src_ptr = DG_ScreenBuffer;
-            let fb_ptr = writer.buffer.as_mut_ptr() as *mut u32;
+    let Some(mut guard) = crate::screen::renderer::WRITER.try_lock() else {
+        return;
+    };
+    let Some(writer) = guard.as_mut() else {
+        return;
+    };
 
-            // USE PITCH (divided by 4 for u32 indexing)
-            let pixels_per_row = (writer.pitch / 4) as usize;
-            let y_offset = 32;
-            let max_pixels = (writer.buffer.len() / 4) as usize;
+    let src_ptr = DG_ScreenBuffer;
+    let fb_ptr = writer.buffer.as_mut_ptr() as *mut u32;
+    let stride = (writer.pitch / 4) as usize;
 
-            for y in 0..400 {
-                let src_row_offset = y * 640;
-                for x in 0..640 {
-                    let color = *src_ptr.add(src_row_offset + x);
+    for y in 0..400 {
+        let src_row = src_ptr.add(y * 640);
+        let dst_row0 = fb_ptr.add((y * 2) * stride);
+        let dst_row1 = fb_ptr.add((y * 2 + 1) * stride);
 
-                    // 2x Scale
-                    for sy in 0..2 {
-                        let dst_row_base = ((y * 2 + sy) + y_offset) * pixels_per_row;
-                        let dst_idx = dst_row_base + (x * 2);
+        // Process 4 source pixels at a time (outputting 8 destination pixels)
+        // 640 / 4 = 160 iterations
+        for x in (0..640).step_by(4) {
+            // Load 4 pixels: [P3, P2, P1, P0]
+            let src_pixels = _mm_loadu_si128(src_row.add(x) as *const __m128i);
 
-                        // Bounds safety check to prevent Exception 13
-                        if dst_idx + 1 < max_pixels {
-                            fb_ptr.add(dst_idx).write(color);
-                            fb_ptr.add(dst_idx + 1).write(color);
-                        }
-                    }
-                }
-            }
-            writer.mark_dirty(y_offset as u64, 800);
+            // Unpack Low: [P1, P1, P0, P0]
+            let low = _mm_unpacklo_epi32(src_pixels, src_pixels);
+            // Unpack High: [P3, P3, P2, P2]
+            let high = _mm_unpackhi_epi32(src_pixels, src_pixels);
+
+            // Store to first row
+            _mm_storeu_si128(dst_row0.add(x * 2) as *mut __m128i, low);
+            _mm_storeu_si128(dst_row0.add(x * 2 + 4) as *mut __m128i, high);
+
+            // Store to second row (vertical doubling)
+            _mm_storeu_si128(dst_row1.add(x * 2) as *mut __m128i, low);
+            _mm_storeu_si128(dst_row1.add(x * 2 + 4) as *mut __m128i, high);
         }
     }
+    writer.mark_dirty(0, 800);
 }
 
 #[unsafe(no_mangle)]
@@ -80,45 +105,65 @@ pub extern "C" fn DG_GetTicksMs() -> u32 {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn DG_GetKey(pressed: *mut i32, key: *mut i32) -> i32 {
+pub unsafe extern "C" fn DG_GetKey(pressed: *mut i32, key: *mut u8) -> i32 {
+    if pressed.is_null() || key.is_null() {
+        return 0;
+    }
+
     if let Some(scancode) = crate::io::keyboard::SCANCODE_QUEUE.pop() {
-        // In most keyboard drivers, if the 8th bit is set (0x80), it's a release
         let is_released = (scancode & 0x80) != 0;
         let base_scancode = scancode & 0x7F;
 
         unsafe {
             *pressed = if is_released { 0 } else { 1 };
-            *key = map_scancode_to_doom(base_scancode);
         }
-        return 1;
-    }
-    0 // No key available
-}
 
-fn map_scancode_to_doom(scancode: u8) -> i32 {
-    match scancode {
-        0x01 => 27,   // ESC
-        0x1C => 13,   // Enter
-        0x39 => 32,   // Space
-        0x48 => 0xAC, // Up Arrow (DOOM constant)
-        0x50 => 0xAD, // Down Arrow
-        0x4B => 0xAE, // Left Arrow
-        0x4D => 0xAF, // Right Arrow
-        0x1D => 0x9D, // Left Control (Fire)
-        0x2A => 0xFE, // Left Shift (Run)
-        // Add alphanumeric keys if needed
-        0x10 => b'q' as i32,
-        0x11 => b'w' as i32,
-        0x12 => b'e' as i32,
-        0x13 => b'r' as i32,
-        _ => 0,
-    }
-}
+        let doom_key = match base_scancode {
+            0x01 => 0x1b, // Escape
+            0x1c => 0x0d, // Enter
+            0x39 => 0xa2, // Spacebar (Doom KEY_USE)
 
+            // DoomGeneric often uses these specific constants:
+            0x1d => 0xa3, // Left Control (Doom KEY_FIRE / KEY_RCTRL)
+            0x38 => 0x92, // Left Alt (Doom KEY_STRAFE / KEY_RALT)
+
+            // Arrows
+            0x48 => 0xad, // Up
+            0x50 => 0xaf, // Down
+            0x4b => 0xac, // Left
+            0x4d => 0xae, // Right
+
+            _ => 0,
+        };
+
+        println!(
+            "Key Event: Base={:#x}, Released={}, DoomKey={:#x}",
+            base_scancode, is_released, doom_key
+        );
+
+        if doom_key != 0 {
+            unsafe {
+                *key = doom_key;
+            }
+            return 1;
+        }
+
+        // Fallback to ASCII
+        if let Some(c) = crate::io::keyboard::scancode_to_char(base_scancode) {
+            unsafe {
+                *key = c as u8;
+            }
+            return 1;
+        }
+    }
+    0
+}
 #[unsafe(no_mangle)]
 pub extern "C" fn DG_SetWindowTitle(_title: *const c_char) {}
 
-// --- 4. Fake File System ---
+// =============================================================================
+// FILE SYSTEM (CRITICAL FIXES)
+// =============================================================================
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn fopen(path: *const c_char, mode: *const c_char) -> *mut c_void {
@@ -126,41 +171,35 @@ pub unsafe extern "C" fn fopen(path: *const c_char, mode: *const c_char) -> *mut
         return core::ptr::null_mut();
     }
 
-    let path_str = CStr::from_ptr(path).to_bytes();
-    let mode_str = CStr::from_ptr(mode).to_bytes();
+    let path_slice = CStr::from_ptr(path).to_bytes();
+    let mode_slice = CStr::from_ptr(mode).to_bytes();
+    let path_str = core::str::from_utf8(path_slice).unwrap_or("?");
 
-    // LOG EVERYTHING
-    crate::println!(
-        "[FS] fopen: {:?} mode {:?}",
-        core::str::from_utf8(path_str).unwrap_or("???"),
-        core::str::from_utf8(mode_str).unwrap_or("???")
-    );
-
-    // Check if it's a WAD (case-insensitive)
+    // 1. Detect WAD Open Request
     let mut is_wad = false;
-    for window in path_str.windows(3) {
+    for window in path_slice.windows(3) {
         if window.eq_ignore_ascii_case(b"wad") {
             is_wad = true;
             break;
         }
     }
 
-    if is_wad {
-        if mode_str.contains(&b'r') {
-            crate::println!("[FS] ✓ Providing WAD handle");
-            WAD_CURSOR = 0;
-            return 0x1234 as *mut c_void;
-        }
+    if is_wad && mode_slice.contains(&b'r') {
+        crate::println!("[FS] fopen: {:?} -> OK (WAD)", path_str);
+        WAD_CURSOR = 0;
+        // RETURN VALID MEMORY, NOT RANDOM NUMBERS
+        return core::ptr::addr_of_mut!(DUMMY_FILE_STRUCT) as *mut c_void;
     }
 
-    // If DOOM is trying to WRITE (mode "w") a config or save
-    if mode_str.contains(&b'w') {
-        crate::println!("[FS] ✓ Providing write sink");
-        return 0x5678 as *mut c_void;
+    // 2. DENY WRITES to prevent Crash
+    // Doom tries to write default.cfg. If we return a fake pointer, fprintf crashes.
+    // Returning NULL tells Doom "Write Failed", so it continues safely.
+    if mode_slice.contains(&b'w') || mode_slice.contains(&b'a') || mode_slice.contains(&b'+') {
+        crate::println!("[FS] fopen: {:?} (Write) -> DENIED", path_str);
+        return core::ptr::null_mut();
     }
 
-    // For reading config files, return NULL
-    crate::println!("[FS] ✗ File not found, returning NULL");
+    crate::println!("[FS] fopen: {:?} -> Not Found", path_str);
     core::ptr::null_mut()
 }
 
@@ -176,8 +215,6 @@ pub unsafe extern "C" fn fread(
     }
 
     let to_read = size * nmemb;
-
-    // Use saturating_sub to prevent underflow if cursor is somehow broken
     let available = WAD_DATA.len().saturating_sub(WAD_CURSOR);
     let actual = if to_read > available {
         available
@@ -186,12 +223,10 @@ pub unsafe extern "C" fn fread(
     };
 
     if actual > 0 {
-        // Only copy if we are within the bounds of WAD_DATA
         core::ptr::copy_nonoverlapping(WAD_DATA.as_ptr().add(WAD_CURSOR), ptr as *mut u8, actual);
         WAD_CURSOR += actual;
     }
 
-    // Return number of elements successfully read
     actual / size
 }
 
@@ -217,20 +252,23 @@ pub unsafe extern "C" fn ftell(_fp: *mut c_void) -> i64 {
     WAD_CURSOR as i64
 }
 
-// Stub for access() if DOOM uses it to check file existence before opening
+// Override fclose locally to be safe
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn fclose(_fp: *mut c_void) -> i32 {
+    0
+}
+
+// Override access to claim WAD exists
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn access(path: *const c_char, _mode: i32) -> i32 {
     if path.is_null() {
         return -1;
     }
-    let path_str = CStr::from_ptr(path).to_bytes();
-
-    // Only claim the WAD exists
-    for window in path_str.windows(3) {
+    let path_slice = CStr::from_ptr(path).to_bytes();
+    for window in path_slice.windows(3) {
         if window.eq_ignore_ascii_case(b"wad") {
-            return 0; // Success
+            return 0;
         }
     }
-
-    -1 // File not found
+    -1
 }
