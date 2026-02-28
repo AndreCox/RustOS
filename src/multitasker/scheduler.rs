@@ -3,7 +3,7 @@ use crate::alloc::collections::VecDeque;
 use spin::Mutex;
 
 pub struct Scheduler {
-    tasks: VecDeque<Task>,
+    pub tasks: VecDeque<Task>,
     pub current_task: Option<Task>,
 }
 impl Scheduler {

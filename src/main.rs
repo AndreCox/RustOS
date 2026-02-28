@@ -2,6 +2,7 @@
 #![no_main] // Indicate that we are not using the standard main function
 #![feature(alloc_error_handler)]
 #![feature(c_variadic)]
+#![allow(warnings)]
 
 extern crate alloc; // Import the alloc crate for heap allocations
 
@@ -15,21 +16,20 @@ use limine::{BaseRevision, request::FramebufferRequest};
 
 // Import modules
 mod c_bridge; // C bridge for using standard C functions
-mod doom_generic;
-mod globals;
-mod helpers;
-mod interrupts;
-mod io;
-mod memory;
-mod multitasker;
-mod screen;
-mod timer;
+mod doom_generic; // My port of doom generic
+mod globals; // Global variables and constants
+mod helpers; // Helper function
+mod interrupts; // GDT and IDT setup
+mod io; // Input/Output handling (keyboard, mouse, etc.)
+mod memory; // Memory management (paging, heap, etc.)
+mod multitasker; // Multitasking and scheduler
+mod screen; // Screen rendering and framebuffer management
+mod timer; // Timer and sleep functions
 
 // Use functions and structs from modules
 use crate::helpers::{enable_sse, hcf};
 use crate::interrupts::{init_idt, init_pic};
 use crate::io::keyboard::{SCANCODE_QUEUE, scancode_to_char};
-use crate::timer::sleep_ms;
 
 #[used]
 #[unsafe(link_section = ".limine_requests")]
@@ -161,7 +161,7 @@ pub extern "C" fn kmain() -> ! {
         scheduler.add_task(idle_task);
         scheduler.add_task(_compositor_task);
         scheduler.add_task(doom_task);
-        // scheduler.add_task(task_a);
+        scheduler.add_task(task_a);
     }
     drop(sched);
 

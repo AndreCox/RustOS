@@ -17,7 +17,7 @@ pub fn is_transmit_empty() -> bool {
 pub fn serial_write_byte(byte: u8) {
     // Wait for the hardware to be ready for the next byte
     while !is_transmit_empty() {
-        crate::multitasker::yield_now(); // Yield to other tasks while waiting
+        core::hint::spin_loop(); // Use CPU pause instead of yielding to scheduler
     }
 
     unsafe {

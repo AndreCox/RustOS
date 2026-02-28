@@ -1,4 +1,4 @@
-use crate::{println, timer};
+use crate::{println, screen, timer};
 use core::ffi::{CStr, VaList, c_char, c_int, c_void};
 
 // =============================================================================
@@ -363,9 +363,7 @@ pub unsafe extern "C" fn vsnprintf(
         i += 1;
     }
 
-    unsafe {
-        writer.finalize()
-    }
+    unsafe { writer.finalize() }
 }
 
 #[unsafe(no_mangle)]
@@ -465,9 +463,45 @@ pub unsafe extern "C" fn system(_command: *const c_char) -> c_int {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn exit(status: c_int) -> ! {
     crate::println!("DOOM exited with status {}", status);
-    loop {
-        timer::sleep_ms(100000);
+    // Ensure we leave exclusive graphics mode so the compositor can redraw UI
+    screen::exit_exclusive_mode();
+    crate::println!(
+        "exit(): exclusive_mode is now {}",
+        screen::is_exclusive_mode()
+    );
+    // Serial marker for exit
+    crate::io::serial::serial_write_byte(b'X');
+    crate::io::serial::serial_write_byte(b'E');
+    crate::io::serial::serial_write_byte(b'\n');
+
+    // 1. Get owner ID safely without interrupts
+    let mut owner_id = 0;
+    x86_64::instructions::interrupts::without_interrupts(|| {
+        if let Some(ref mut sched) = *crate::multitasker::scheduler::SCHEDULER.lock() {
+            owner_id = sched.get_current_task_id();
+        }
+    });
+
+    // 2. Release VFB *before* killing the task
+    if owner_id != 0 {
+        crate::println!("exit(): releasing VFB owner {}", owner_id);
+        crate::screen::vfb::release_owner(owner_id);
     }
+
+    // 3. Mark Killed and immediately yield without interrupts
+    x86_64::instructions::interrupts::without_interrupts(|| {
+        if let Some(ref mut sched) = *crate::multitasker::scheduler::SCHEDULER.lock() {
+            if let Some(ref mut task) = sched.current_task {
+                task.status = crate::multitasker::task::TaskStatus::Killed;
+            }
+        }
+    });
+
+    // Trigger the scheduler immediately so the killed task is removed
+    crate::multitasker::yield_now();
+
+    // If we ever return here, halt the CPU to avoid undefined behavior
+    crate::helpers::hcf();
 }
 
 // =============================================================================
@@ -589,7 +623,9 @@ unsafe fn handle_format_specifier(
             let (new_i, precision) = parse_precision(fmt_bytes, i);
             let check_i = new_i;
 
-            if check_i < fmt_bytes.len() && (fmt_bytes[check_i] == b'd' || fmt_bytes[check_i] == b'i') {
+            if check_i < fmt_bytes.len()
+                && (fmt_bytes[check_i] == b'd' || fmt_bytes[check_i] == b'i')
+            {
                 let val = args.arg::<i32>();
                 writer.write_int_with_precision(val, precision);
                 new_i

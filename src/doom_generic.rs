@@ -38,11 +38,22 @@ pub unsafe extern "C" fn DG_Init() {
     crate::println!("[DOOM] DG_Init - Starting...");
 
     // Switch to Exclusive Graphics Mode
-    crate::screen::EXCLUSIVE_GRAPHICS.store(true, Ordering::SeqCst);
+    crate::screen::enter_exclusive_mode();
 
     // Ensure dimensions are correct (Now 640x400 scaled from 320x200 by C side)
     DG_Width = 640;
     DG_Height = 400;
+    // Allocate a virtual framebuffer for DOOM so it doesn't touch the hardware directly
+    // Use the current task id as owner if available
+    let mut owner_id = 0;
+    x86_64::instructions::interrupts::without_interrupts(|| {
+        if let Some(ref mut sched) = *crate::multitasker::scheduler::SCHEDULER.lock() {
+            owner_id = sched.get_current_task_id();
+        }
+    });
+    let vptr =
+        crate::screen::vfb::create_virtual_fb(owner_id, DG_Width as usize, DG_Height as usize);
+    DG_ScreenBuffer = vptr;
 }
 
 // =============================================================================
@@ -54,44 +65,10 @@ pub unsafe extern "C" fn DG_DrawFrame() {
     if DG_ScreenBuffer.is_null() {
         return;
     }
-
-    let Some(mut guard) = crate::screen::renderer::WRITER.try_lock() else {
-        return;
-    };
-    let Some(writer) = guard.as_mut() else {
-        return;
-    };
-
-    let src_ptr = DG_ScreenBuffer;
-    let fb_ptr = writer.buffer.as_mut_ptr() as *mut u32;
-    let stride = (writer.pitch / 4) as usize;
-
-    for y in 0..400 {
-        let src_row = src_ptr.add(y * 640);
-        let dst_row0 = fb_ptr.add((y * 2) * stride);
-        let dst_row1 = fb_ptr.add((y * 2 + 1) * stride);
-
-        // Process 4 source pixels at a time (outputting 8 destination pixels)
-        // 640 / 4 = 160 iterations
-        for x in (0..640).step_by(4) {
-            // Load 4 pixels: [P3, P2, P1, P0]
-            let src_pixels = _mm_loadu_si128(src_row.add(x) as *const __m128i);
-
-            // Unpack Low: [P1, P1, P0, P0]
-            let low = _mm_unpacklo_epi32(src_pixels, src_pixels);
-            // Unpack High: [P3, P3, P2, P2]
-            let high = _mm_unpackhi_epi32(src_pixels, src_pixels);
-
-            // Store to first row
-            _mm_storeu_si128(dst_row0.add(x * 2) as *mut __m128i, low);
-            _mm_storeu_si128(dst_row0.add(x * 2 + 4) as *mut __m128i, high);
-
-            // Store to second row (vertical doubling)
-            _mm_storeu_si128(dst_row1.add(x * 2) as *mut __m128i, low);
-            _mm_storeu_si128(dst_row1.add(x * 2 + 4) as *mut __m128i, high);
-        }
-    }
-    writer.mark_dirty(0, 800);
+    // Mark the virtual framebuffer dirty and let the compositor copy it into
+    // the hardware framebuffer. This prevents tasks from holding the hardware
+    // writer lock while drawing.
+    crate::screen::vfb::mark_dirty(DG_ScreenBuffer, 0, DG_Height as u64);
 }
 
 #[unsafe(no_mangle)]
@@ -135,11 +112,6 @@ pub unsafe extern "C" fn DG_GetKey(pressed: *mut i32, key: *mut u8) -> i32 {
 
             _ => 0,
         };
-
-        println!(
-            "Key Event: Base={:#x}, Released={}, DoomKey={:#x}",
-            base_scancode, is_released, doom_key
-        );
 
         if doom_key != 0 {
             unsafe {
