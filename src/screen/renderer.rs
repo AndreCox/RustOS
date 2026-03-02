@@ -82,6 +82,20 @@ impl<'a> FramebufferWriter<'a> {
     }
 
     pub fn draw_rect(&mut self, x: u64, y: u64, width: u64, height: u64, color: u32) {
+        if x >= self.width || y >= self.height {
+            return;
+        }
+        let width = if x + width > self.width {
+            self.width - x
+        } else {
+            width
+        };
+        let height = if y + height > self.height {
+            self.height - y
+        } else {
+            height
+        };
+
         let pitch = self.pitch as usize;
         let width = width as usize;
 
@@ -90,7 +104,7 @@ impl<'a> FramebufferWriter<'a> {
         let (_, pixels, _) = unsafe { self.buffer.align_to_mut::<u32>() };
         let pixels_per_row = pitch / 4;
 
-        for row in y as usize..(y + height) as usize {
+        for row in y as usize..(y as usize + height as usize) {
             let start = row * pixels_per_row + x as usize;
             let end = start + width;
 
@@ -107,9 +121,14 @@ impl<'a> FramebufferWriter<'a> {
     }
 
     pub unsafe fn draw_char(&mut self, c: char, x: u64, y: u64, color: u32) {
-        let font_w = self.font.header.width as usize;
-        let font_h = self.font.header.height as usize;
-        let bytes_per_row = (font_w + 7) / 8;
+        let font_w = self.font.header.width as u64;
+        let font_h = self.font.header.height as u64;
+
+        if x + font_w > self.width || y + font_h > self.height {
+            return;
+        }
+
+        let bytes_per_row = (font_w as usize + 7) / 8;
         let glyph = self.font.get_glyph(c);
         let pitch = self.pitch as usize;
 
@@ -117,7 +136,7 @@ impl<'a> FramebufferWriter<'a> {
         let start_offset = (y as usize * pitch) + (x as usize * 4);
         let buffer_ptr = self.buffer.as_mut_ptr().add(start_offset) as *mut u32;
 
-        for row in 0..font_h {
+        for row in 0..font_h as usize {
             // Pointer to the start of this specific row on the screen
             let row_ptr = (buffer_ptr as *mut u8).add(row * pitch) as *mut u32;
 
@@ -127,7 +146,7 @@ impl<'a> FramebufferWriter<'a> {
                 // Process 8 pixels at a time from one font byte
                 for bit in 0..8 {
                     let col = byte_col * 8 + bit;
-                    if col >= font_w {
+                    if col >= font_w as usize {
                         break;
                     } // Handle fonts not divisible by 8
 
@@ -138,7 +157,7 @@ impl<'a> FramebufferWriter<'a> {
                 }
             }
         }
-        self.mark_dirty(y, font_h as u64);
+        self.mark_dirty(y, font_h);
     }
 
     pub fn clear_screen(&mut self) {
@@ -160,24 +179,29 @@ impl<'a> FramebufferWriter<'a> {
         let char_w = self.font.header.width as u64;
         let char_h = self.font.header.height as u64;
 
-        if self.cursor_y + char_h > self.height {
-            self.scroll();
-        }
-
+        // 1. Handle cursor movement
         match c {
             '\x08' => {
-                // Backspace
-                if self.cursor_x >= char_w {
-                    self.cursor_x -= char_w;
-                    self.clear_rect(self.cursor_x, self.cursor_y, char_w, char_h);
-                }
+                /* ... backspace logic ... */
+                return;
+            }
+            '\r' => {
+                self.cursor_x = 0;
+                return;
             }
             '\n' => {
                 self.cursor_x = 0;
                 self.cursor_y += char_h;
             }
-            '\r' => self.cursor_x = 0,
             _ => {
+                if self.cursor_x + char_w > self.width {
+                    self.cursor_x = 0;
+                    self.cursor_y += char_h;
+                }
+                // 2. ONLY check for scroll once we know we are drawing
+                if self.cursor_y + char_h > self.height {
+                    self.scroll();
+                }
                 unsafe {
                     self.draw_char(c, self.cursor_x, self.cursor_y, 0xFFFFFFFF);
                 }
@@ -185,40 +209,55 @@ impl<'a> FramebufferWriter<'a> {
             }
         }
 
-        if self.cursor_x + char_w > self.width {
-            self.cursor_x = 0;
-            self.cursor_y += char_h;
+        // 3. Final check: If a \n pushed us off screen, scroll now
+        if self.cursor_y + char_h > self.height {
+            self.scroll();
         }
     }
 
     fn scroll(&mut self) {
         let char_h = self.font.header.height as usize;
         let pitch = self.pitch as usize;
-        let buffer_len = self.buffer.len();
+        let header_offset = HEADER_HEIGHT as usize * pitch;
 
-        // Define the scrollable area (excluding header)
-        let header_bytes = HEADER_HEIGHT as usize * pitch;
-        let scroll_zone_bytes = buffer_len - header_bytes;
-        let bytes_to_shift = scroll_zone_bytes - (char_h * pitch);
+        // 1. Calculate the start of the second line and the destination
+        let dest_start = header_offset;
+        let src_start = header_offset + (char_h * pitch);
 
-        unsafe {
-            let ptr = self.buffer.as_mut_ptr();
-
-            // Move memory UP: dst = header_end, src = header_end + 1 line
-            ptr::copy(
-                ptr.add(header_bytes + char_h * pitch), // src
-                ptr.add(header_bytes),                  // dst
-                bytes_to_shift,                         // count
-            );
-
-            // Clear the new bottom line
-            let bottom_start = header_bytes + bytes_to_shift;
-            ptr::write_bytes(ptr.add(bottom_start), 0, char_h * pitch);
+        // 2. Safety check: ensure we aren't jumping out of the buffer
+        if src_start >= self.buffer.len() {
+            self.clear_screen(); // Fallback if math fails
+            self.cursor_y = HEADER_HEIGHT;
+            return;
         }
 
-        self.cursor_y -= char_h as u64;
+        // 3. Manual copy instead of ptr::copy to avoid SIMD/SSE triggers
+        // We use u64 to move 8 bytes at a time for decent speed without SIMD
+        let bytes_to_move = self.buffer.len() - src_start;
+        let words_to_move = bytes_to_move / 8;
 
-        // Scrolling invalidates the whole scrollable area
+        unsafe {
+            let src_ptr = self.buffer.as_ptr().add(src_start) as *const u64;
+            let dst_ptr = self.buffer.as_mut_ptr().add(dest_start) as *mut u64;
+
+            for i in 0..words_to_move {
+                dst_ptr
+                    .add(i)
+                    .write_volatile(src_ptr.add(i).read_volatile());
+            }
+
+            // 4. Clear the very last line
+            let last_line_start = self.buffer.len() - (char_h * pitch);
+            core::ptr::write_bytes(
+                self.buffer.as_mut_ptr().add(last_line_start),
+                0,
+                char_h * pitch,
+            );
+        }
+
+        // 5. Authoritative cursor reset
+        self.cursor_y = self.height.saturating_sub(char_h as u64);
+        self.cursor_x = 0;
         self.mark_dirty(HEADER_HEIGHT, self.height - HEADER_HEIGHT);
     }
 

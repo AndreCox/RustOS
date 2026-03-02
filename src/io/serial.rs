@@ -29,3 +29,9 @@ pub fn serial_write_byte(byte: u8) {
         );
     }
 }
+
+pub fn serial_write_str(s: &str) {
+    for byte in s.bytes() {
+        serial_write_byte(byte);
+    }
+}

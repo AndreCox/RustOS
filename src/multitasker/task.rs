@@ -23,13 +23,14 @@ impl Default for FpuState {
         FpuState { data }
     }
 }
+#[repr(C, align(16))]
 
 pub struct Task {
+    pub fpu_state: FpuState,
     pub id: u64,
     pub stack_pointer: u64,
     pub wake_at: u64,
     pub status: TaskStatus,
-    pub fpu_state: FpuState,
 }
 
 #[repr(C)]
@@ -63,16 +64,17 @@ struct TaskContext {
 
 impl Task {
     pub fn new(id: u64, entry_point: u64) -> Self {
-        let stack_size = 1024 * 4; // 16 KB
+        let stack_size = 1024 * 32; // 32 KB
         let layout = Layout::from_size_align(stack_size, 16).unwrap();
         let stack_base = unsafe { alloc(layout) } as u64;
         let stack_top = stack_base + stack_size as u64;
 
         let aligned_top = stack_top & !0xF;
+        let abi_compliant_top = aligned_top - 8;
 
         let context_size = core::mem::size_of::<TaskContext>() as u64;
 
-        let context_ptr = (aligned_top - context_size) as *mut TaskContext;
+        let context_ptr = (abi_compliant_top - context_size) as *mut TaskContext;
 
         unsafe {
             context_ptr.write(TaskContext {
@@ -84,7 +86,7 @@ impl Task {
 
                 // When iretq finishes, RSP will be set to this value.
                 // It must be abi_compliant_top so the function starts with (RSP % 16) == 8.
-                stack_pointer: aligned_top,
+                stack_pointer: abi_compliant_top,
                 stack_segment: 0x30,
                 ..Default::default()
             });

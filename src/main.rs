@@ -17,6 +17,7 @@ use limine::{BaseRevision, request::FramebufferRequest};
 // Import modules
 mod c_bridge; // C bridge for using standard C functions
 mod doom_generic; // My port of doom generic
+mod fs; // Filesystem handling (FAT32)
 mod globals; // Global variables and constants
 mod helpers; // Helper function
 mod interrupts; // GDT and IDT setup
@@ -52,8 +53,28 @@ pub static HHDM_REQUEST: HhdmRequest = HhdmRequest::new();
 
 #[panic_handler]
 fn panic(_info: &PanicInfo) -> ! {
+    // 1. Force a newline and print a clear marker to serial
+    crate::io::serial::serial_write_str("\n\n!!!!! KERNEL PANIC !!!!!\n");
+
+    // 2. Try to print the panic message to serial directly
+    // Since PanicInfo doesn't easily convert to &str without formatting,
+    // we use a simple loop or just print that a panic occurred.
+    // For more detail, we can try to use core::fmt to write to serial.
+    struct SerialWriter;
+    impl core::fmt::Write for SerialWriter {
+        fn write_str(&mut self, s: &str) -> core::fmt::Result {
+            crate::io::serial::serial_write_str(s);
+            Ok(())
+        }
+    }
+    let mut sw = SerialWriter;
+    let _ = core::fmt::write(&mut sw, format_args!("{}", _info));
+    crate::io::serial::serial_write_str("\n!!!!!!!!!!!!!!!!!!!!!!!!\n");
+
+    // 3. Fallback to normal println for screen (might not work if compositor hung)
     println!("KERNEL PANIC: {}", _info);
-    // disable interrupts
+
+    // 4. Disable interrupts and halt
     unsafe {
         asm!("cli");
     }
@@ -144,6 +165,10 @@ pub extern "C" fn kmain() -> ! {
     }
     println!("Framebuffer setup complete.");
 
+    println!("Initializing Filesystem...");
+    fs::init_fs();
+    println!("Filesystem initialized.");
+
     println!("Setting up Multitasking");
     multitasker::init_multitasking();
     println!("Multitasking setup complete.");
@@ -155,13 +180,15 @@ pub extern "C" fn kmain() -> ! {
     let doom_task = crate::multitasker::task::Task::new(4, task_doom as *const () as u64);
     let task_a: multitasker::task::Task =
         crate::multitasker::task::Task::new(5, task_a as *const () as u64);
+    let task_ls = crate::multitasker::task::Task::new(6, task_ls as *const () as u64);
 
     let mut sched = crate::multitasker::scheduler::SCHEDULER.lock();
     if let Some(ref mut scheduler) = *sched {
         scheduler.add_task(idle_task);
         scheduler.add_task(_compositor_task);
-        scheduler.add_task(doom_task);
+        // scheduler.add_task(doom_task);
         scheduler.add_task(task_a);
+        scheduler.add_task(task_ls);
     }
     drop(sched);
 
@@ -225,4 +252,42 @@ fn task_b() -> ! {
         asm!("ud2");
     }
     loop {}
+}
+
+fn task_ls() -> ! {
+    timer::sleep_ms(2000);
+    loop {
+        crate::println!("--- File System Root Directory ---");
+
+        {
+            let fs_lock = fs::FILESYSTEM.lock();
+
+            if let Some(fs) = fs_lock.as_ref() {
+                // 1. Unwrap the Result from read_dir to get the iterator
+                if let Ok(dir_iter) = fs.read_dir("/") {
+                    for entry_result in dir_iter {
+                        // 2. Unwrap the Result from the iterator to get the DirEntry
+                        if let Ok(entry) = entry_result {
+                            let path = entry.path();
+                            if entry.is_dir() {
+                                crate::println!("[DIR]  {}", path);
+                            } else if entry.is_file() {
+                                // Note: use .file_size() based on the example
+                                let size = entry.file_size();
+                                crate::println!("[FILE] {} ({} bytes)", path, size);
+                            }
+                        }
+                    }
+                } else {
+                    crate::println!("LS Task: Could not open root directory.");
+                }
+            } else {
+                crate::println!("LS Task: Filesystem not initialized!");
+            }
+        }
+
+        crate::println!("--- End of Directory ---");
+
+        timer::sleep_ms(1000);
+    }
 }

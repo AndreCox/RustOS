@@ -82,28 +82,22 @@ pub extern "C" fn realloc(ptr: *mut u8, new_size: usize) -> *mut u8 {
         let raw_ptr = ptr.sub(HEADER_SIZE);
         let old_size = (*(raw_ptr as *const MallocHeader)).size;
 
-        // If new size is smaller or equal and fits in same allocation class,
-        // we could potentially reuse the allocation (optional optimization)
-        if new_size <= old_size {
-            // Update header size
-            (raw_ptr as *mut MallocHeader).write(MallocHeader { size: new_size });
-            // Zero out freed portion
-            core::ptr::write_bytes(ptr.add(new_size), 0, old_size - new_size);
-            return ptr;
-        }
-
         // Allocate new space
         let new_ptr = malloc(new_size);
         if new_ptr.is_null() {
             return core::ptr::null_mut();
         }
 
-        // Copy old data (malloc already zeroed the rest)
-        core::ptr::copy_nonoverlapping(ptr, new_ptr, old_size);
+        // Copy minimal amount
+        let copy_size = if new_size < old_size {
+            new_size
+        } else {
+            old_size
+        };
+        core::ptr::copy_nonoverlapping(ptr, new_ptr, copy_size);
 
-        // Free old pointer
-        let layout = Layout::from_size_align_unchecked(old_size + HEADER_SIZE, ALIGNMENT);
-        ALLOCATOR.dealloc(raw_ptr, layout);
+        // Free old pointer with its ORIGINAL size
+        free(ptr);
 
         new_ptr
     }

@@ -37,7 +37,7 @@ unsafe impl GlobalAlloc for DynamicLockedHeap {
 #[global_allocator]
 pub static ALLOCATOR: DynamicLockedHeap = DynamicLockedHeap(LockedHeap::empty());
 
-pub const HEAP_START: u64 = 0xFFFF_9000_0000_0000;
+pub const HEAP_START: u64 = 0xFFFF_A000_0000_0000;
 pub const HEAP_SIZE: u64 = 1024 * 1024 * 25; // allocate 25 MiB for the heap
 
 pub fn init_heap(mapper: &mut OffsetPageTable) {

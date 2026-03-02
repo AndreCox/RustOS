@@ -23,8 +23,8 @@ pub fn compositor_task() -> ! {
                         was_exclusive = false;
                     }
 
-                    // 1. Process text queue but limit to 2000 chars per frame to prevent stutter
-                    for _ in 0..2000 {
+                    // 1. Process text queue but limit characters per frame to prevent stutter
+                    for _ in 0..256 {
                         if let Some(c) = crate::io::log_buffer::DISPLAY_QUEUE.pop_char() {
                             writer.put_char(c as char);
                         } else {
@@ -35,12 +35,12 @@ pub fn compositor_task() -> ! {
                     // 2. Only draw UI if NOT in exclusive mode
                     let current_time = crate::timer::get_uptime_ms();
                     if current_time - LAST_UPTIME_DRAW.load(Ordering::Relaxed) >= 100 {
-                        crate::screen::graphics::draw_ui(writer);
+                        crate::screen::graphics::draw_ui(writer.width);
                         LAST_UPTIME_DRAW.store(current_time, Ordering::Relaxed);
                     }
                 } else {
                     was_exclusive = true;
-                    // Discard text buffer logs to prevent massive unrendered backlog 
+                    // Discard text buffer logs to prevent massive unrendered backlog
                     while let Some(_) = crate::io::log_buffer::DISPLAY_QUEUE.pop_char() {}
                 }
 
@@ -48,7 +48,9 @@ pub fn compositor_task() -> ! {
                 let vlist = vfb::snapshot_meta();
                 for (ptr, width, height, owner, min_y, max_y) in vlist.iter() {
                     // Skip unowned buffers (owner==0)
-                    if *owner == 0 { continue; }
+                    if *owner == 0 {
+                        continue;
+                    }
                     // Sanity check sizes
                     if *width == 0 || *height == 0 || *width > 4096 || *height > 4096 {
                         continue;
@@ -59,17 +61,28 @@ pub fn compositor_task() -> ! {
                             let fb_ptr = writer.buffer.as_mut_ptr() as *mut u32;
                             let stride = (writer.pitch / 4) as usize;
 
-                            for y in 0..*height {
-                                let src_row = src_ptr.add(y * *width);
-                                let dst_row0 = fb_ptr.add((y * 2) * stride);
-                                let dst_row1 = fb_ptr.add((y * 2 + 1) * stride);
+                            let hw_width = writer.width as usize;
+                            if *width == hw_width {
+                                // 1:1 Copy for native resolution (e.g. UI)
+                                for y in 0..*height {
+                                    let src_row = src_ptr.add(y * *width);
+                                    let dst_row = fb_ptr.add(y * stride);
+                                    core::ptr::copy_nonoverlapping(src_row, dst_row, *width);
+                                }
+                            } else {
+                                // 2x Scaling (Default for Doom 640x400 -> 1280x800)
+                                for y in 0..*height {
+                                    let src_row = src_ptr.add(y * *width);
+                                    let dst_row0 = fb_ptr.add((y * 2) * stride);
+                                    let dst_row1 = fb_ptr.add((y * 2 + 1) * stride);
 
-                                for x in 0..*width {
-                                    let px = src_row.add(x).read();
-                                    dst_row0.add(x * 2).write(px);
-                                    dst_row0.add(x * 2 + 1).write(px);
-                                    dst_row1.add(x * 2).write(px);
-                                    dst_row1.add(x * 2 + 1).write(px);
+                                    for x in 0..*width {
+                                        let px = src_row.add(x).read();
+                                        dst_row0.add(x * 2).write(px);
+                                        dst_row0.add(x * 2 + 1).write(px);
+                                        dst_row1.add(x * 2).write(px);
+                                        dst_row1.add(x * 2 + 1).write(px);
+                                    }
                                 }
                             }
                         }
@@ -91,7 +104,10 @@ pub fn compositor_task() -> ! {
                 x86_64::instructions::interrupts::without_interrupts(|| {
                     let sched_guard = crate::multitasker::scheduler::SCHEDULER.lock();
                     if let Some(ref sched) = *sched_guard {
-                        crate::println!("Scheduler current_task_id={}", sched.get_current_task_id());
+                        crate::println!(
+                            "Scheduler current_task_id={}",
+                            sched.get_current_task_id()
+                        );
                     }
                 });
                 unsafe {
@@ -102,9 +118,13 @@ pub fn compositor_task() -> ! {
             }
         }
 
-        // 4. ALWAYS drain serial queue so you don't lose debug info
-        while let Some(byte) = crate::io::log_buffer::SERIAL_QUEUE.pop_char() {
-            crate::io::serial::serial_write_byte(byte);
+        // 4. Drain serial queue but limit per frame so we don't block for seconds
+        for _ in 0..512 {
+            if let Some(byte) = crate::io::log_buffer::SERIAL_QUEUE.pop_char() {
+                crate::io::serial::serial_write_byte(byte);
+            } else {
+                break;
+            }
         }
         crate::timer::sleep_ms(16);
     }

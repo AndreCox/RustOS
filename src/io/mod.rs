@@ -1,5 +1,6 @@
 use alloc::fmt;
 
+pub mod ata_driver;
 pub mod keyboard;
 pub mod log_buffer;
 pub mod serial;

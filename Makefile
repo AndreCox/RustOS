@@ -29,7 +29,7 @@ all: $(ISO)
 # 1. Build the Rust kernel
 $(KERNEL): $(RUST_SOURCES) Cargo.toml Cargo.lock x86_64-kernel.json
 	@echo "==> Compiling Rust Kernel ($(PROFILE))"
-	cargo +nightly build $(CARGO_FLAGS) --target x86_64-kernel.json -Zbuild-std=core,compiler_builtins,alloc -Zbuild-std-features=compiler-builtins-mem
+	cargo +nightly build $(CARGO_FLAGS) --no-default-features --target x86_64-kernel.json -Zbuild-std=core,compiler_builtins,alloc -Zbuild-std-features=compiler-builtins-mem
 
 # 2. Setup iso_root and build the ISO
 $(ISO): $(KERNEL) limine.conf limine/limine-bios.sys limine/limine-bios-cd.bin limine/limine-uefi-cd.bin limine/limine
@@ -60,16 +60,16 @@ clean:
 
 # 4. Shortcut to build and run in QEMU
 run: $(ISO)
-	qemu-system-x86_64 -cdrom $(ISO) -m 1G -serial stdio
+	qemu-system-x86_64 -boot d -drive format=raw,file=disk.img -cdrom $(ISO) -m 1G -serial stdio
 
 .PHONY: debug
 debug: $(ISO)
 	@echo "==> Starting QEMU in debug mode..."
-	qemu-system-x86_64 -cdrom $(ISO) -m 1G -serial stdio -s -S & \
+	qemu-system-x86_64 -boot d -drive format=raw,file=disk.img -cdrom $(ISO) -m 1G -serial stdio -s -S & \
 	sleep 1; \
 	$(GDB) $(KERNEL) -ex "target remote :1234" -ex "layout src" -ex "continue"
 
 .PHONY: debug-qemu-only
 debug-qemu-only: $(ISO)
 	@echo "==> Starting QEMU in debug mode (waiting for GDB...)"
-	qemu-system-x86_64 -cdrom $(ISO) -m 1G -serial stdio -s -S
+	qemu-system-x86_64 -boot d -drive format=raw,file=disk.img -cdrom $(ISO) -m 1G -serial stdio -s -S

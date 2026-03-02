@@ -43,20 +43,19 @@ pub fn create_virtual_fb(owner: u64, width: usize, height: usize) -> *mut u32 {
 }
 
 pub fn mark_dirty(buf_ptr: *mut u32, y: u64, height: u64) {
-    let mut list = VFB_LIST.lock();
-    for fb in list.iter_mut() {
-        if fb.ptr == buf_ptr as usize {
-            let y0 = y as u64;
-            let y1 = (y + height) as u64;
-            let prev_min = fb.dirty_min_y.load(Ordering::Relaxed);
-            if y0 < prev_min {
-                fb.dirty_min_y.store(y0, Ordering::Relaxed);
+    // Use try_lock! If we can't get it, the compositor is likely
+    // busy with it; we'll catch it on the next pass.
+    if let Some(mut list) = VFB_LIST.try_lock() {
+        for fb in list.iter_mut() {
+            if fb.ptr == buf_ptr as usize {
+                let y0 = y as u64;
+                let y1 = (y + height) as u64;
+
+                // Use Relaxed for performance, but SeqCst if you see tearing
+                let _ = fb.dirty_min_y.fetch_min(y0, Ordering::Relaxed);
+                let _ = fb.dirty_max_y.fetch_max(y1, Ordering::Relaxed);
+                return;
             }
-            let prev_max = fb.dirty_max_y.load(Ordering::Relaxed);
-            if y1 > prev_max {
-                fb.dirty_max_y.store(y1, Ordering::Relaxed);
-            }
-            return;
         }
     }
 }
@@ -88,21 +87,14 @@ pub fn clear_dirty(buf_ptr: *mut u32) {
     }
 }
 
-/// Release any virtual framebuffers owned by `owner_id`.
-/// This will zero the buffer memory and clear ownership so compositor
-/// can stop attempting to composite it.
 pub fn release_owner(owner_id: u64) {
-    crate::println!("[VFB] release_owner start {}", owner_id);
     let mut list = VFB_LIST.lock();
     for fb in list.iter_mut() {
         if fb.owner == owner_id {
-            // Avoid touching the framebuffer memory directly (it may be
-            // invalid if the task crashed). Just release ownership and
-            // clear dirty markers so the compositor ignores it.
             fb.owner = 0;
-            fb.dirty_min_y.store(u64::MAX, Ordering::Relaxed);
-            fb.dirty_max_y.store(0, Ordering::Relaxed);
+            fb.dirty_min_y.store(u64::MAX, Ordering::Release);
+            fb.dirty_max_y.store(0, Ordering::Release);
         }
     }
-    crate::println!("[VFB] release_owner done {}", owner_id);
+    // Lock is dropped here automatically
 }
