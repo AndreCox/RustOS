@@ -5,6 +5,7 @@ pub enum TaskStatus {
     Ready,
     Running,
     Killed, // The "Crashing" state
+    Exited, // Normal termination
     Waiting,
 }
 

@@ -60,6 +60,7 @@ static mut IDT: [IdtEntry; 256] = [IdtEntry::missing(); 256];
 // Array of ISR stubs for the first 48 interrupts
 unsafe extern "C" {
     static isr_stub_table: [extern "C" fn(); 48];
+    fn isr_stub_128(); // 0x80 Syscall
 }
 
 // Struct to represent the interrupt stack frame
@@ -116,6 +117,8 @@ pub unsafe fn init_idt() {
         for i in 0..48 {
             IDT[i].set_handler(isr_stub_table[i] as u64, cs);
         }
+        // Manual entry for 0x80 (Syscall)
+        IDT[0x80].set_handler(isr_stub_128 as u64, cs);
     }
 
     // Create the pointer on the stack
@@ -287,6 +290,41 @@ pub extern "C" fn exception_handler(frame: &InterruptStackFrame) -> u64 {
     current_rsp
 }
 
+#[unsafe(no_mangle)]
+pub extern "C" fn syscall_handler(frame: &InterruptStackFrame) -> u64 {
+    let syscall_nr = frame.rax;
+    let arg1 = frame.rdi;
+
+    if syscall_nr != 1 {
+        crate::serial_println!("Syscall: nr={}, task={}", syscall_nr, frame.rax);
+    }
+
+    match syscall_nr {
+        1 => {
+            // sys_print_char(char)
+            let c = arg1 as u8;
+            crate::io::log_buffer::SERIAL_QUEUE.push_char(c);
+            crate::io::log_buffer::DISPLAY_QUEUE.push_char(c);
+        }
+        2 => {
+            // sys_exit()
+            let mut guard = crate::multitasker::scheduler::SCHEDULER.lock();
+            if let Some(sched) = guard.as_mut() {
+                if let Some(task) = sched.current_task.as_mut() {
+                    task.status = crate::multitasker::task::TaskStatus::Exited;
+                }
+                return sched.schedule(frame as *const _ as u64);
+            }
+        }
+        _ => {
+            serial_println!("Unknown syscall: {}", syscall_nr);
+        }
+    }
+
+    // Return the current stack pointer so the CPU can resume
+    (frame as *const InterruptStackFrame as u64)
+}
+
 // Assembly code for ISR stubs and common handler
 global_asm!(
     r#"
@@ -318,6 +356,27 @@ global_asm!(
         .endif
         .set i, i + 1
     .endr
+
+    // Special entry for 0x80 we use this to handle syscalls, linux and stuff like that uses 0x80 so I chose that
+    .global isr_stub_128
+    isr_stub_128:
+        push 0 // no error code
+        push 128 // interrupt number
+        push r15; push r14; push r13; push r12
+        push r11; push r10; push r9;  push r8
+        push rbp; push rdi; push rsi; push rdx
+        push rcx; push rbx; push rax
+
+        mov rdi, rsp
+        call syscall_handler
+
+        mov rsp, rax
+        pop rax; pop rbx; pop rcx; pop rdx
+        pop rsi; pop rdi; pop rbp; pop r8
+        pop r9;  pop r10; pop r11; pop r12
+        pop r13; pop r14; pop r15
+        add rsp, 16
+        iretq
 
     /* 3. The Common Handler */
     isr_common_stub:

@@ -46,8 +46,14 @@ impl Scheduler {
 
         // 1. Save the state of the task that just finished
         if let Some(mut task) = self.current_task.take() {
-            if task.status == super::task::TaskStatus::Killed {
-                crate::serial_println!("Scheduler: Reaping crashed task {}", task.id);
+            if task.status == super::task::TaskStatus::Killed
+                || task.status == super::task::TaskStatus::Exited
+            {
+                crate::serial_println!(
+                    "Scheduler: Reaping task {} (status: {:?})",
+                    task.id,
+                    task.status
+                );
                 // DO NOT push_back. Let 'task' drop here to free its metadata.
                 // Note: You should ideally deallocate the stack memory here too.
             } else {
@@ -77,6 +83,9 @@ impl Scheduler {
                         core::arch::asm!("fxrstor [{}]", in(reg) &task.fpu_state.data);
                     }
 
+                    if task.id >= 100 {
+                        crate::serial_println!("Scheduler: Switching TO task {}", task.id);
+                    }
                     self.current_task = Some(task);
                     return next_sp;
                 } else {

@@ -96,5 +96,4 @@ pub fn release_owner(owner_id: u64) {
             fb.dirty_max_y.store(0, Ordering::Release);
         }
     }
-    // Lock is dropped here automatically
 }
