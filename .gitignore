@@ -5,4 +5,4 @@ RustOS.iso
 *.log
 *.WAD
 *.wad
-disk.img
+*.img

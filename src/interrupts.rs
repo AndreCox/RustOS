@@ -179,13 +179,12 @@ pub extern "C" fn exception_handler(frame: &InterruptStackFrame) -> u64 {
         }
         crate::io::serial::serial_write_byte(b'\n');
 
-        // Print the error code in hex (64-bit -> 16 hex digits)
-        let ec = frame.interrupt_number;
-        for &b in b"Interrupt Number: " {
+        let mut ec_hex = frame.error_code;
+        for &b in b"Error Code: " {
             crate::io::serial::serial_write_byte(b);
         }
         for i in (0..16).rev() {
-            let nibble = ((ec >> (i * 4)) & 0xF) as u8;
+            let nibble = ((ec_hex >> (i * 4)) & 0xF) as u8;
             let ch = if nibble < 10 {
                 b'0' + nibble
             } else {
@@ -195,7 +194,9 @@ pub extern "C" fn exception_handler(frame: &InterruptStackFrame) -> u64 {
         }
         crate::io::serial::serial_write_byte(b'\n');
 
-        println!("\n[CPU EXCEPTION {}] at RIP: {:#x}", num, frame.rip);
+        let mut cr2: u64;
+        unsafe { core::arch::asm!("mov {}, cr2", out(reg) cr2); }
+        println!("\n[CPU EXCEPTION {}] at RIP: {:#x}. CR2: {:#x}. Error Code: {:#x}", num, frame.rip, cr2, frame.error_code);
         // print debug info
         println!(
             "RAX: {:#x} RBX: {:#x} RCX: {:#x} RDX: {:#x}",

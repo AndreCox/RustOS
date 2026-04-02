@@ -14,6 +14,10 @@ pub struct AtaPio {
 
 impl AtaPio {
     pub fn read_sectors(&mut self, lba: u32, count: u8, buffer: &mut [u8]) {
+        let flags_were_enabled = interrupts_enabled();
+        // Prevent context switches during timing-sensitive disk IO
+        unsafe { core::arch::asm!("cli") };
+
         unsafe {
             // 1. Prepare the drive for a multi-sector read
             self.device_port.write(0xE0 | ((lba >> 24) & 0x0F) as u8);
@@ -28,7 +32,19 @@ impl AtaPio {
         for sector in 0..count as usize {
             // Wait for the drive to finish seeking and fill its internal buffer
             while self.is_busy() {}
-            while !self.is_ready() {} // DRQ must be set for each sector
+            if self.has_error() {
+                crate::serial_println!("ATA Error during read_sectors (LBA: {})", lba);
+                if flags_were_enabled { unsafe { core::arch::asm!("sti") }; }
+                return;
+            }
+
+            while !self.is_ready() {
+                if self.has_error() {
+                    crate::serial_println!("ATA Error while waiting for ready (LBA: {})", lba);
+                    if flags_were_enabled { unsafe { core::arch::asm!("sti") }; }
+                    return;
+                }
+            } // DRQ must be set for each sector
 
             // 3. Transfer 256 words (512 bytes) for THIS sector
             for i in 0..256 {
@@ -42,9 +58,14 @@ impl AtaPio {
                 }
             }
         }
+
+        if flags_were_enabled { unsafe { core::arch::asm!("sti") }; }
     }
 
     pub fn write_sectors(&mut self, lba: u32, count: u8, buffer: &[u8]) {
+        let flags_were_enabled = interrupts_enabled();
+        unsafe { core::arch::asm!("cli") };
+
         unsafe {
             self.device_port.write(0xE0 | ((lba >> 24) & 0x0F) as u8);
             self.sector_count_port.write(count);
@@ -56,7 +77,19 @@ impl AtaPio {
 
         for sector in 0..count as usize {
             while self.is_busy() {}
-            while !self.is_ready() {} // Drive says "Okay, give me the next 512 bytes"
+            if self.has_error() {
+                crate::serial_println!("ATA Error during write_sectors (LBA: {})", lba);
+                if flags_were_enabled { unsafe { core::arch::asm!("sti") }; }
+                return;
+            }
+
+            while !self.is_ready() {
+                if self.has_error() {
+                    crate::serial_println!("ATA Error while waiting for ready in write (LBA: {})", lba);
+                    if flags_were_enabled { unsafe { core::arch::asm!("sti") }; }
+                    return;
+                }
+            } // Drive says "Okay, give me the next 512 bytes"
 
             for i in 0..256 {
                 let offset = (sector * 512) + (i * 2);
@@ -70,6 +103,7 @@ impl AtaPio {
             self.command_port.write(0xE7);
         }
         while self.is_busy() {}
+        if flags_were_enabled { unsafe { core::arch::asm!("sti") }; }
     }
 }
 
@@ -102,4 +136,14 @@ impl AtaPio {
     pub fn is_ready(&mut self) -> bool {
         unsafe { (self.status_port.read() & 0x08) != 0 }
     }
+
+    pub fn has_error(&mut self) -> bool {
+        unsafe { (self.status_port.read() & 0x01) != 0 }
+    }
+}
+
+fn interrupts_enabled() -> bool {
+    let rflags: u64;
+    unsafe { core::arch::asm!("pushfq; pop {}", out(reg) rflags, options(nomem, preserves_flags)) };
+    (rflags & (1 << 9)) != 0
 }

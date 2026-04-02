@@ -22,9 +22,15 @@ GDB := rust-gdb
 RUST_SOURCES := $(shell find src -name '*.rs' 2>/dev/null)
 
 
-.PHONY: all clean run iso
+.PHONY: all clean run iso apps
 
-all: $(ISO)
+all: apps $(ISO)
+
+apps:
+	@echo "==> Compiling Apps"
+	cd apps/hello && cargo build --target x86_64-unknown-none --release --config 'rustflags=["-Clink-arg=-Tlinker.ld"]'
+	objcopy -O binary apps/hello/target/x86_64-unknown-none/release/hello apps/hello/hello.bin
+	mcopy -D o -i disk.img apps/hello/hello.bin ::/
 
 # 1. Build the Rust kernel
 $(KERNEL): $(RUST_SOURCES) Cargo.toml Cargo.lock x86_64-kernel.json
@@ -59,7 +65,7 @@ clean:
 	cargo clean
 
 # 4. Shortcut to build and run in QEMU
-run: $(ISO)
+run: apps $(ISO)
 	qemu-system-x86_64 -boot d -drive format=raw,file=disk.img -cdrom $(ISO) -m 1G -serial stdio
 
 .PHONY: debug

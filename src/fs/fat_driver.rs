@@ -31,10 +31,11 @@ impl BlockBase for AtaIoWrapper {
 
 impl BlockRead for AtaIoWrapper {
     fn read(&mut self, block: u32, buf: &mut [u8]) -> Result<(), Self::Error> {
+        if buf.is_empty() { return Ok(()); }
         // Calculate how many 512-byte sectors fit in this buffer
         let count = (buf.len() / 512) as u8;
 
-        if count == 0 && !buf.is_empty() {
+        if count == 0 {
             // If someone asks for less than 512 bytes, we have a problem
             return Err(ErrorKind::Other);
         }
@@ -46,7 +47,9 @@ impl BlockRead for AtaIoWrapper {
 
 impl BlockWrite for AtaIoWrapper {
     fn write(&mut self, block: u32, buf: &[u8]) -> Result<(), Self::Error> {
+        if buf.is_empty() { return Ok(()); }
         let count = (buf.len() / 512) as u8;
+        if count == 0 { return Err(ErrorKind::Other); }
         // Make sure your AtaPio struct in ata_driver.rs has this method!
         // If it's missing, you'll need to implement it similar to read_sectors.
         self.driver.write_sectors(block, count, buf);
