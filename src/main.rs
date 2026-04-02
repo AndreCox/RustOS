@@ -16,7 +16,6 @@ use limine::{BaseRevision, request::FramebufferRequest};
 
 // Import modules
 mod c_bridge; // C bridge for using standard C functions
-mod doom_generic; // My port of doom generic
 mod fs; // Filesystem handling (FAT32)
 mod globals; // Global variables and constants
 mod helpers; // Helper function
@@ -183,7 +182,7 @@ pub extern "C" fn kmain() -> ! {
         crate::multitasker::task::Task::new(5, task_a as *const () as u64);
     let task_shell =
         crate::multitasker::task::Task::new(6, crate::shell::task_shell as *const () as u64);
-    let task_serial = 
+    let task_serial =
         crate::multitasker::task::Task::new(7, crate::screen::serial_task as *const () as u64);
 
     let mut sched = crate::multitasker::scheduler::SCHEDULER.lock();
@@ -224,28 +223,6 @@ fn task_a() -> ! {
             crate::memory::get_heap_usage() / 1024
         );
     }
-}
-
-fn task_doom() -> ! {
-    let arg0 = b"doomgeneric\0".as_ptr() as *const i8;
-    let arg1 = b"-iwad\0".as_ptr() as *const i8;
-    let arg2 = b"DOOM.WAD\0".as_ptr() as *const i8;
-    let argv = [arg0, arg1, arg2];
-
-    unsafe {
-        doomgeneric_Create(3, argv.as_ptr());
-    }
-
-    loop {
-        unsafe {
-            doomgeneric_Tick();
-        };
-    }
-}
-
-unsafe extern "C" {
-    fn doomgeneric_Tick();
-    fn doomgeneric_Create(argc: i32, argv: *const *const i8) -> i32;
 }
 
 fn task_b() -> ! {

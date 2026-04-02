@@ -1,11 +1,103 @@
 use crate::helpers::hcf;
 use crate::io::keyboard::SCANCODE_QUEUE;
 use crate::{globals, println, screen, serial_println};
+use alloc::string::String;
+use alloc::vec::Vec;
 use core::arch::{asm, global_asm};
 use core::sync::atomic::AtomicU64;
 
 static BUSY_TICKS: AtomicU64 = AtomicU64::new(0);
 static TOTAL_TICKS: AtomicU64 = AtomicU64::new(0);
+const SYSCALL_ERR: u64 = u64::MAX;
+const MAX_SYSCALL_PATH: usize = 512;
+const MAX_SYSCALL_RW: usize = 1024 * 1024;
+
+unsafe fn user_cstr_to_string(ptr: u64, max_len: usize) -> Option<String> {
+    if ptr == 0 || max_len == 0 {
+        return None;
+    }
+
+    let mut bytes = Vec::new();
+    let base = ptr as *const u8;
+    for i in 0..max_len {
+        let b = unsafe { base.add(i).read() };
+        if b == 0 {
+            break;
+        }
+        bytes.push(b);
+    }
+
+    if bytes.is_empty() {
+        return None;
+    }
+
+    let s = core::str::from_utf8(&bytes).ok()?;
+    Some(s.into())
+}
+
+unsafe fn sys_fs_read(path_ptr: u64, buf_ptr: u64, len: u64) -> u64 {
+    if buf_ptr == 0 || len == 0 {
+        return 0;
+    }
+
+    let read_len = core::cmp::min(len as usize, MAX_SYSCALL_RW);
+    let path = match unsafe { user_cstr_to_string(path_ptr, MAX_SYSCALL_PATH) } {
+        Some(p) => p,
+        None => return SYSCALL_ERR,
+    };
+
+    let mut fs_lock = crate::fs::FILESYSTEM.lock();
+    let fs = match fs_lock.as_mut() {
+        Some(fs) => fs,
+        None => return SYSCALL_ERR,
+    };
+
+    let mut file = match fs.get_ro_file(path.as_str()) {
+        Ok(f) => f,
+        Err(_) => return SYSCALL_ERR,
+    };
+
+    let out = unsafe { core::slice::from_raw_parts_mut(buf_ptr as *mut u8, read_len) };
+    match embedded_io::Read::read(&mut file, out) {
+        Ok(n) => n as u64,
+        Err(_) => SYSCALL_ERR,
+    }
+}
+
+unsafe fn sys_fs_write(path_ptr: u64, buf_ptr: u64, len: u64) -> u64 {
+    if buf_ptr == 0 || len == 0 {
+        return 0;
+    }
+
+    let write_len = core::cmp::min(len as usize, MAX_SYSCALL_RW);
+    let path = match unsafe { user_cstr_to_string(path_ptr, MAX_SYSCALL_PATH) } {
+        Some(p) => p,
+        None => return SYSCALL_ERR,
+    };
+
+    let input = unsafe { core::slice::from_raw_parts(buf_ptr as *const u8, write_len) };
+
+    let mut fs_lock = crate::fs::FILESYSTEM.lock();
+    let fs = match fs_lock.as_mut() {
+        Some(fs) => fs,
+        None => return SYSCALL_ERR,
+    };
+
+    let _ = fs.remove_file(path.as_str());
+
+    let mut file = match fs.create_file(path.as_str()) {
+        Ok(f) => f,
+        Err(_) => return SYSCALL_ERR,
+    };
+
+    match embedded_io::Write::write(&mut file, input) {
+        Ok(n) => {
+            let _ = embedded_io::Write::flush(&mut file);
+            n as u64
+        }
+        Err(_) => SYSCALL_ERR,
+    }
+}
 
 // Define the Interrupt Descriptor Table (IDT) structures
 #[repr(C, packed)]
@@ -294,6 +386,8 @@ pub extern "C" fn exception_handler(frame: &InterruptStackFrame) -> u64 {
 pub extern "C" fn syscall_handler(frame: &InterruptStackFrame) -> u64 {
     let syscall_nr = frame.rax;
     let arg1 = frame.rdi;
+    let arg2 = frame.rsi;
+    let arg3 = frame.rdx;
 
     if syscall_nr != 1 {
         crate::serial_println!("Syscall: nr={}, task={}", syscall_nr, frame.rax);
@@ -313,6 +407,37 @@ pub extern "C" fn syscall_handler(frame: &InterruptStackFrame) -> u64 {
                 if let Some(task) = sched.current_task.as_mut() {
                     task.status = crate::multitasker::task::TaskStatus::Exited;
                 }
+                return sched.schedule(frame as *const _ as u64);
+            }
+        }
+        3 => {
+            // sys_clear_screen()
+            crate::screen::renderer::request_clear_screen();
+        }
+        4 => {
+            // sys_set_cursor(x, y)
+            let x = (arg1 & 0xFFFF);
+            let y = ((arg1 >> 16) & 0xFFFF);
+            crate::screen::renderer::request_set_cursor(x, y);
+        }
+        5 => {
+            // sys_fs_read(path_ptr, out_buf_ptr, len) -> bytes_read | u64::MAX on error
+            return unsafe { sys_fs_read(arg1, arg2, arg3) };
+        }
+        6 => {
+            // sys_fs_write(path_ptr, in_buf_ptr, len) -> bytes_written | u64::MAX on error
+            return unsafe { sys_fs_write(arg1, arg2, arg3) };
+        }
+        7 => {
+            // sys_get_scancode() -> returns next raw scancode byte, or 0 if none
+            if let Some(scancode) = SCANCODE_QUEUE.pop() {
+                return scancode as u64;
+            }
+        }
+        8 => {
+            // sys_yield() -> cooperate with the scheduler
+            let mut guard = crate::multitasker::scheduler::SCHEDULER.lock();
+            if let Some(sched) = guard.as_mut() {
                 return sched.schedule(frame as *const _ as u64);
             }
         }

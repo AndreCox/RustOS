@@ -1,0 +1,5 @@
+[build]
+rustflags = ["-Clink-arg=-Tapps/micro/linker.ld", "-Clink-arg=-static", "-Crelocation-model=static", "-Cpanic=abort"]
+
+[target.x86_64-unknown-none]
+linker = "rust-lld"

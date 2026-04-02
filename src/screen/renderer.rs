@@ -3,12 +3,44 @@
 use crate::screen::font::{FONT_DATA, Font};
 use core::fmt;
 use core::ptr;
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use spin::Mutex;
 
 pub static WRITER: Mutex<Option<FramebufferWriter>> = Mutex::new(None);
+static PENDING_CLEAR: AtomicBool = AtomicBool::new(false);
+static PENDING_CURSOR: AtomicU64 = AtomicU64::new(u64::MAX);
 
 pub const HEADER_HEIGHT: u64 = 32;
+
+#[inline]
+fn pack_cursor(x: u64, y: u64) -> u64 {
+    ((y & 0xFFFF) << 16) | (x & 0xFFFF)
+}
+
+#[inline]
+fn unpack_cursor(packed: u64) -> (u64, u64) {
+    (packed & 0xFFFF, (packed >> 16) & 0xFFFF)
+}
+
+pub fn request_clear_screen() {
+    PENDING_CLEAR.store(true, Ordering::Release);
+}
+
+pub fn request_set_cursor(x: u64, y: u64) {
+    PENDING_CURSOR.store(pack_cursor(x, y), Ordering::Release);
+}
+
+pub fn apply_pending_commands(writer: &mut FramebufferWriter<'_>) {
+    if PENDING_CLEAR.swap(false, Ordering::AcqRel) {
+        writer.clear_screen();
+    }
+
+    let packed = PENDING_CURSOR.swap(u64::MAX, Ordering::AcqRel);
+    if packed != u64::MAX {
+        let (x, y) = unpack_cursor(packed);
+        writer.set_cursor(x, y);
+    }
+}
 
 pub fn init(writer: FramebufferWriter<'static>) {
     *WRITER.lock() = Some(writer);
@@ -162,6 +194,8 @@ impl<'a> FramebufferWriter<'a> {
 
     pub fn clear_screen(&mut self) {
         self.buffer.fill(0);
+        self.cursor_x = 0;
+        self.cursor_y = HEADER_HEIGHT;
         self.mark_dirty(0, self.height);
     }
 
@@ -182,7 +216,11 @@ impl<'a> FramebufferWriter<'a> {
         // 1. Handle cursor movement
         match c {
             '\x08' => {
-                /* ... backspace logic ... */
+                // Move one glyph left and clear that cell.
+                if self.cursor_x >= char_w {
+                    self.cursor_x -= char_w;
+                    self.clear_rect(self.cursor_x, self.cursor_y, char_w, char_h);
+                }
                 return;
             }
             '\r' => {
@@ -213,6 +251,11 @@ impl<'a> FramebufferWriter<'a> {
         if self.cursor_y + char_h > self.height {
             self.scroll();
         }
+    }
+
+    pub fn set_cursor(&mut self, x: u64, y: u64) {
+        self.cursor_x = x;
+        self.cursor_y = y + HEADER_HEIGHT; // Ensure we don't draw in the header area
     }
 
     fn scroll(&mut self) {

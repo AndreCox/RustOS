@@ -101,4 +101,37 @@ impl Task {
             fpu_state: FpuState::default(),
         }
     }
+
+    pub fn new_user(id: u64, entry_point: u64, user_stack_top: u64) -> Self {
+        let stack_size = 1024 * 32; // 32 KB
+        let layout = Layout::from_size_align(stack_size, 16).unwrap();
+        let stack_base = unsafe { alloc(layout) } as u64;
+        let stack_top = stack_base + stack_size as u64;
+
+        let aligned_top = stack_top & !0xF;
+        let abi_compliant_top = aligned_top - 8;
+
+        let context_size = core::mem::size_of::<TaskContext>() as u64;
+        let context_ptr = (abi_compliant_top - context_size) as *mut TaskContext;
+
+        unsafe {
+            context_ptr.write(TaskContext {
+                rbp: aligned_top,
+                instruction_pointer: entry_point,
+                code_segment: 0x28,
+                cpu_flags: 0x202,
+                stack_pointer: user_stack_top,
+                stack_segment: 0x30,
+                ..Default::default()
+            });
+        }
+
+        Self {
+            id,
+            stack_pointer: context_ptr as u64,
+            wake_at: 0,
+            status: TaskStatus::Ready,
+            fpu_state: FpuState::default(),
+        }
+    }
 }

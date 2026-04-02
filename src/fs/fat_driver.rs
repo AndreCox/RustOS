@@ -31,11 +31,11 @@ impl BlockBase for AtaIoWrapper {
 
 impl BlockRead for AtaIoWrapper {
     fn read(&mut self, block: u32, buf: &mut [u8]) -> Result<(), Self::Error> {
-        if buf.is_empty() { return Ok(()); }
+        if buf.is_empty() {
+            return Ok(());
+        }
         let count = (buf.len() / 512) as usize;
-        
-        crate::serial_println!("ATA_READ: block={}, buf.len()={}, count={}", block, buf.len(), count);
-        
+
         if count == 0 {
             return Err(ErrorKind::Other);
         }
@@ -46,7 +46,11 @@ impl BlockRead for AtaIoWrapper {
 
         while remaining > 0 {
             let chunk = core::cmp::min(remaining, 255) as u8;
-            self.driver.read_sectors(cur_block, chunk, &mut buf[offset .. offset + (chunk as usize) * 512]);
+            self.driver.read_sectors(
+                cur_block,
+                chunk,
+                &mut buf[offset..offset + (chunk as usize) * 512],
+            );
             cur_block += chunk as u32;
             offset += (chunk as usize) * 512;
             remaining -= chunk as usize;
@@ -58,9 +62,13 @@ impl BlockRead for AtaIoWrapper {
 
 impl BlockWrite for AtaIoWrapper {
     fn write(&mut self, block: u32, buf: &[u8]) -> Result<(), Self::Error> {
-        if buf.is_empty() { return Ok(()); }
+        if buf.is_empty() {
+            return Ok(());
+        }
         let count = (buf.len() / 512) as u8;
-        if count == 0 { return Err(ErrorKind::Other); }
+        if count == 0 {
+            return Err(ErrorKind::Other);
+        }
         // Make sure your AtaPio struct in ata_driver.rs has this method!
         // If it's missing, you'll need to implement it similar to read_sectors.
         self.driver.write_sectors(block, count, buf);

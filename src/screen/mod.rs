@@ -16,6 +16,8 @@ pub fn compositor_task() -> ! {
         let is_exclusive = EXCLUSIVE_GRAPHICS.load(Ordering::Relaxed);
         if let Some(mut guard) = crate::screen::renderer::WRITER.try_lock() {
             if let Some(writer) = guard.as_mut() {
+                crate::screen::renderer::apply_pending_commands(writer);
+
                 if !is_exclusive {
                     // 0. If we just exited exclusive mode, clear the screen
                     if was_exclusive {
@@ -47,8 +49,12 @@ pub fn compositor_task() -> ! {
                 // 3. Composite virtual framebuffers
                 let vlist = vfb::snapshot_meta();
                 for (ptr, width, height, owner, min_y, max_y) in vlist.iter() {
-                    if *owner == 0 { continue; }
-                    if *width == 0 || *height == 0 || *width > 4096 || *height > 4096 { continue; }
+                    if *owner == 0 {
+                        continue;
+                    }
+                    if *width == 0 || *height == 0 || *width > 4096 || *height > 4096 {
+                        continue;
+                    }
                     if *min_y < *max_y {
                         unsafe {
                             let src_ptr = (*ptr) as *mut u32;
@@ -57,18 +63,24 @@ pub fn compositor_task() -> ! {
                             let hw_width = writer.width as usize;
                             if *width == hw_width {
                                 for y in 0..*height {
-                                    core::ptr::copy_nonoverlapping(src_row(src_ptr, y, *width), dst_row(fb_ptr, y, stride), *width);
+                                    core::ptr::copy_nonoverlapping(
+                                        src_row(src_ptr, y, *width),
+                                        dst_row(fb_ptr, y, stride),
+                                        *width,
+                                    );
                                 }
                             } else {
                                 // Scaling... (implementation details)
                                 for y in 0..*height {
                                     let src = src_ptr.add(y * *width);
-                                    let dst0 = fb_ptr.add((y*2)*stride);
-                                    let dst1 = fb_ptr.add((y*2+1)*stride);
+                                    let dst0 = fb_ptr.add((y * 2) * stride);
+                                    let dst1 = fb_ptr.add((y * 2 + 1) * stride);
                                     for x in 0..*width {
                                         let px = *src.add(x);
-                                        *dst0.add(x*2) = px; *dst0.add(x*2+1) = px;
-                                        *dst1.add(x*2) = px; *dst1.add(x*2+1) = px;
+                                        *dst0.add(x * 2) = px;
+                                        *dst0.add(x * 2 + 1) = px;
+                                        *dst1.add(x * 2) = px;
+                                        *dst1.add(x * 2 + 1) = px;
                                     }
                                 }
                             }
@@ -102,8 +114,12 @@ pub fn serial_task() -> ! {
 }
 
 // Helper to avoid clutter
-unsafe fn src_row(ptr: *const u32, y: usize, w: usize) -> *const u32 { ptr.add(y * w) }
-unsafe fn dst_row(ptr: *mut u32, y: usize, s: usize) -> *mut u32 { ptr.add(y * s) }
+unsafe fn src_row(ptr: *const u32, y: usize, w: usize) -> *const u32 {
+    ptr.add(y * w)
+}
+unsafe fn dst_row(ptr: *mut u32, y: usize, s: usize) -> *mut u32 {
+    ptr.add(y * s)
+}
 
 pub fn enter_exclusive_mode() {
     EXCLUSIVE_GRAPHICS.store(true, Ordering::SeqCst);

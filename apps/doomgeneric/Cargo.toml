@@ -1,0 +1,23 @@
+[package]
+name = "doomgeneric"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "doomgeneric"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+x86_64 = { version = "0.15", features = ["instructions"] }
+lazy_static = {version="1.5.0", default-features = false, features = ["spin_no_std"]}
+crossbeam-queue = {version="0.3.12", default-features = false, features = ["alloc"]}
+spin = "0.10.0"
+
+[build-dependencies]
+cc = { version = "1.0", default-features = false }
+
+[profile.release]
+panic = "abort"
+opt-level = 3

@@ -1,7 +1,7 @@
 use crate::alloc::string::String;
 use crate::alloc::vec::Vec;
 use crate::fs;
-use crate::io::keyboard::{scancode_to_char, SCANCODE_QUEUE};
+use crate::io::keyboard::{SCANCODE_QUEUE, scancode_to_char};
 use crate::multitasker::yield_now;
 use crate::print;
 use crate::println;
@@ -9,12 +9,13 @@ use crate::program_loader::launch_program;
 
 pub fn task_shell() -> ! {
     let mut input_buffer = String::new();
+    let mut current_dir = String::from("/");
 
     // Give system time to initialize
     crate::timer::sleep_ms(1000);
 
     println!("\nWelcome to RustOS Shell!");
-    print!("> ");
+    print_prompt(&current_dir);
 
     loop {
         // Handle input from the keyboard queue
@@ -24,10 +25,10 @@ pub fn task_shell() -> ! {
                     println!();
                     let cmd = input_buffer.trim();
                     if !cmd.is_empty() {
-                        execute_command(cmd);
+                        execute_command(cmd, &mut current_dir);
                     }
                     input_buffer.clear();
-                    print!("> ");
+                    print_prompt(&current_dir);
                 } else if character == '\x08' {
                     // Backspace
                     if !input_buffer.is_empty() {
@@ -41,12 +42,60 @@ pub fn task_shell() -> ! {
                 }
             }
         }
-        
+
         yield_now();
     }
 }
 
-fn execute_command(cmd_line: &str) {
+fn print_prompt(current_dir: &str) {
+    print!("{}> ", current_dir);
+}
+
+fn normalize_path(path: &str) -> String {
+    let mut parts = Vec::new();
+    for part in path.split('/') {
+        if part.is_empty() || part == "." {
+            continue;
+        }
+        if part == ".." {
+            if !parts.is_empty() {
+                parts.pop();
+            }
+            continue;
+        }
+        parts.push(part);
+    }
+
+    if parts.is_empty() {
+        return String::from("/");
+    }
+
+    let mut out = String::from("/");
+    out.push_str(parts[0]);
+    for part in &parts[1..] {
+        out.push('/');
+        out.push_str(part);
+    }
+    out
+}
+
+fn resolve_path(current_dir: &str, input: &str) -> String {
+    if input.is_empty() {
+        return current_dir.into();
+    }
+
+    if input.starts_with('/') {
+        return normalize_path(input);
+    }
+
+    if current_dir == "/" {
+        normalize_path(&crate::alloc::format!("/{}", input))
+    } else {
+        normalize_path(&crate::alloc::format!("{}/{}", current_dir, input))
+    }
+}
+
+fn execute_command(cmd_line: &str, current_dir: &mut String) {
     let mut parts = cmd_line.split_whitespace();
     let cmd = parts.next().unwrap_or("");
 
@@ -55,21 +104,33 @@ fn execute_command(cmd_line: &str) {
             println!("Available commands:");
             println!("  help      - Show this message");
             println!("  clear     - Clear the screen");
-            println!("  ls        - List files in root directory");
-            println!("  <program> - Run a .bin program from the root directory");
+            println!("  ls        - List files in current directory");
+            println!("  mkdir <name> - Create a directory in the current directory");
+            println!("  cd <path> - Change current directory");
+            println!("  pwd       - Print current directory");
+            println!("  <program> - Run a .bin program");
         }
         "clear" => {
-            // Ideally we'd call a generic clear or reset the writer
-            // For now, let's just print a bunch of newlines or call into screen logic.
-            // Since we don't have a direct clear function exported nicely, let's fake it
-            for _ in 0..50 {
-                println!();
+            // run system call to clear screen and move cursor to top-left
+            unsafe {
+                core::arch::asm!(
+                    "int 0x80",
+                    in("rax") 3u64, // System call 3: clear_screen
+                    options(nostack, preserves_flags)
+                );
+                core::arch::asm!(
+                    "int 0x80",
+                    in("rax") 4u64, // System call 4: move_cursor
+                    in("rdi") 0u64, // X coordinate
+                    in("rsi") 16u64, // Y coordinate
+                    options(nostack, preserves_flags)
+                );
             }
         }
         "ls" => {
             let fs_lock = fs::FILESYSTEM.lock();
             if let Some(fs) = fs_lock.as_ref() {
-                if let Ok(dir_iter) = fs.read_dir("/") {
+                if let Ok(dir_iter) = fs.read_dir(current_dir.as_str()) {
                     for entry_result in dir_iter {
                         if let Ok(entry) = entry_result {
                             let path = entry.path();
@@ -88,17 +149,50 @@ fn execute_command(cmd_line: &str) {
                 println!("Error: Filesystem not initialized.");
             }
         }
+        "mkdir" => {
+            if let Some(dir_name) = parts.next() {
+                let full_path = resolve_path(current_dir, dir_name);
+                let fs_lock = fs::FILESYSTEM.lock();
+                if let Some(fs) = fs_lock.as_ref() {
+                    match fs.create_dir(full_path.as_str()) {
+                        Ok(_) => println!("Directory '{}' created.", full_path),
+                        Err(e) => println!("Error creating directory '{}': {:?}", full_path, e),
+                    }
+                } else {
+                    println!("Error: Filesystem not initialized.");
+                }
+            } else {
+                println!("Usage: mkdir <directory_name>");
+            }
+        }
+        "cd" => {
+            let target = parts.next().unwrap_or("/");
+            let new_dir = resolve_path(current_dir, target);
+            let fs_lock = fs::FILESYSTEM.lock();
+            if let Some(fs) = fs_lock.as_ref() {
+                if fs.read_dir(new_dir.as_str()).is_ok() {
+                    *current_dir = new_dir;
+                } else {
+                    println!("cd: no such directory: {}", target);
+                }
+            } else {
+                println!("Error: Filesystem not initialized.");
+            }
+        }
+        "pwd" => {
+            println!("{}", current_dir);
+        }
         _ => {
             // Attempt to launch it as a program
-            let filename = cmd;
+            let filename = resolve_path(current_dir, cmd);
 
-            println!("Attempting to launch {}...", filename);
-            match launch_program(filename) {
+            println!("Attempting to launch {}...", filename.as_str());
+            match launch_program(filename.as_str()) {
                 Ok(task_id) => {
-                    println!("Launched {} with Task ID {}", filename, task_id);
+                    println!("Launched {} with Task ID {}", filename.as_str(), task_id);
                 }
                 Err(e) => {
-                    println!("Failed to launch {}: {}", filename, e);
+                    println!("Failed to launch {}: {}", filename.as_str(), e);
                 }
             }
         }
