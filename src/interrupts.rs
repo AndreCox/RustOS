@@ -195,8 +195,13 @@ pub extern "C" fn exception_handler(frame: &InterruptStackFrame) -> u64 {
         crate::io::serial::serial_write_byte(b'\n');
 
         let mut cr2: u64;
-        unsafe { core::arch::asm!("mov {}, cr2", out(reg) cr2); }
-        println!("\n[CPU EXCEPTION {}] at RIP: {:#x}. CR2: {:#x}. Error Code: {:#x}", num, frame.rip, cr2, frame.error_code);
+        unsafe {
+            core::arch::asm!("mov {}, cr2", out(reg) cr2);
+        }
+        println!(
+            "\n[CPU EXCEPTION {}] at RIP: {:#x}. CR2: {:#x}. Error Code: {:#x}",
+            num, frame.rip, cr2, frame.error_code
+        );
         // print debug info
         println!(
             "RAX: {:#x} RBX: {:#x} RCX: {:#x} RDX: {:#x}",
@@ -214,8 +219,8 @@ pub extern "C" fn exception_handler(frame: &InterruptStackFrame) -> u64 {
             "R12: {:#x} R13: {:#x} R14: {:#x} R15: {:#x}",
             frame.r12, frame.r13, frame.r14, frame.r15
         );
-        serial_println!("RSP: {:#x} RFLAGS: {:#x}", frame.rsp, frame.rflags);
-        serial_println!("CS:  {:#x} SS:     {:#x}", frame.cs, frame.ss);
+        println!("RSP: {:#x} RFLAGS: {:#x}", frame.rsp, frame.rflags);
+        println!("CS:  {:#x} SS:     {:#x}", frame.cs, frame.ss);
 
         // Step 1: Try to get the MutexGuard
         if let Some(mut guard) = crate::multitasker::scheduler::SCHEDULER.try_lock() {

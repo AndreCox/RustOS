@@ -32,15 +32,26 @@ impl BlockBase for AtaIoWrapper {
 impl BlockRead for AtaIoWrapper {
     fn read(&mut self, block: u32, buf: &mut [u8]) -> Result<(), Self::Error> {
         if buf.is_empty() { return Ok(()); }
-        // Calculate how many 512-byte sectors fit in this buffer
-        let count = (buf.len() / 512) as u8;
-
+        let count = (buf.len() / 512) as usize;
+        
+        crate::serial_println!("ATA_READ: block={}, buf.len()={}, count={}", block, buf.len(), count);
+        
         if count == 0 {
-            // If someone asks for less than 512 bytes, we have a problem
             return Err(ErrorKind::Other);
         }
 
-        self.driver.read_sectors(block, count, buf);
+        let mut remaining = count;
+        let mut cur_block = block;
+        let mut offset = 0;
+
+        while remaining > 0 {
+            let chunk = core::cmp::min(remaining, 255) as u8;
+            self.driver.read_sectors(cur_block, chunk, &mut buf[offset .. offset + (chunk as usize) * 512]);
+            cur_block += chunk as u32;
+            offset += (chunk as usize) * 512;
+            remaining -= chunk as usize;
+        }
+
         Ok(())
     }
 }

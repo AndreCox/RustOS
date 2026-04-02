@@ -183,11 +183,14 @@ pub extern "C" fn kmain() -> ! {
         crate::multitasker::task::Task::new(5, task_a as *const () as u64);
     let task_shell =
         crate::multitasker::task::Task::new(6, crate::shell::task_shell as *const () as u64);
+    let task_serial = 
+        crate::multitasker::task::Task::new(7, crate::screen::serial_task as *const () as u64);
 
     let mut sched = crate::multitasker::scheduler::SCHEDULER.lock();
     if let Some(ref mut scheduler) = *sched {
         scheduler.add_task(idle_task);
         scheduler.add_task(_compositor_task);
+        scheduler.add_task(task_serial);
         // scheduler.add_task(task_a);
         scheduler.add_task(task_shell);
     }

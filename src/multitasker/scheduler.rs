@@ -47,7 +47,7 @@ impl Scheduler {
         // 1. Save the state of the task that just finished
         if let Some(mut task) = self.current_task.take() {
             if task.status == super::task::TaskStatus::Killed {
-                crate::println!("Scheduler: Reaping crashed task {}", task.id);
+                crate::serial_println!("Scheduler: Reaping crashed task {}", task.id);
                 // DO NOT push_back. Let 'task' drop here to free its metadata.
                 // Note: You should ideally deallocate the stack memory here too.
             } else {

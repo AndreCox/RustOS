@@ -28,8 +28,7 @@ all: apps $(ISO)
 
 apps:
 	@echo "==> Compiling Apps"
-	cd apps/hello && cargo build --target x86_64-unknown-none --release --config 'rustflags=["-Clink-arg=-Tlinker.ld"]'
-	objcopy -O binary apps/hello/target/x86_64-unknown-none/release/hello apps/hello/hello.bin
+	objcopy -j .text -j .rodata -j .data -O binary apps/hello/target/x86_64-unknown-none/release/hello apps/hello/hello.bin
 	mcopy -D o -i disk.img apps/hello/hello.bin ::/
 
 # 1. Build the Rust kernel

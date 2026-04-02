@@ -15,12 +15,21 @@ pub fn launch_program(filename: &str) -> Result<u64, &'static str> {
     let mut actual_path = None;
     if let Ok(dir_iter) = fs.read_dir("/") {
         crate::serial_println!("launch_program: successfully read root dir");
-        let target = filename.to_uppercase().replace(".", "").replace("\\", "").replace("/", "");
+        let target = filename
+            .to_uppercase()
+            .replace(".", "")
+            .replace("\\", "")
+            .replace("/", "");
         for entry_result in dir_iter {
             if let Ok(entry) = entry_result {
                 if entry.is_file() {
-                    let p_stripped = crate::alloc::format!("{}", entry.path()).to_uppercase().replace(".", "").replace("\\", "").replace("/", "");
-                    if p_stripped == target || p_stripped == crate::alloc::format!("{}BIN", target) {
+                    let p_stripped = crate::alloc::format!("{}", entry.path())
+                        .to_uppercase()
+                        .replace(".", "")
+                        .replace("\\", "")
+                        .replace("/", "");
+                    if p_stripped == target || p_stripped == crate::alloc::format!("{}BIN", target)
+                    {
                         actual_path = Some(crate::alloc::format!("{}", entry.path()));
                         break;
                     }
@@ -64,7 +73,10 @@ pub fn launch_program(filename: &str) -> Result<u64, &'static str> {
             Err(_) => return Err("Error reading file"),
         }
     }
-    crate::serial_println!("launch_program: finished read loop. Read {} bytes", total_read);
+    crate::serial_println!(
+        "launch_program: finished read loop. Read {} bytes",
+        total_read
+    );
 
     // Allocate memory for the program to live forever (or until task is reaped, but we don't handle freeing yet)
     let memory_slice = file_content.leak();
@@ -74,7 +86,7 @@ pub fn launch_program(filename: &str) -> Result<u64, &'static str> {
     // Generate a task ID (just a hacky static counter for now)
     static mut NEXT_TASK_ID: u64 = 100;
     let task_id = unsafe {
-        let id = NEXT_TASK_ID;
+        let id: u64 = NEXT_TASK_ID;
         NEXT_TASK_ID += 1;
         id
     };
@@ -82,13 +94,17 @@ pub fn launch_program(filename: &str) -> Result<u64, &'static str> {
     let new_task = Task::new(task_id, entry_point);
     crate::serial_println!("launch_program: created task");
 
-    let mut sched_lock = SCHEDULER.lock();
-    if let Some(ref mut scheduler) = *sched_lock {
-        scheduler.add_task(new_task);
-        crate::serial_println!("launch_program: task added to scheduler");
-    } else {
-        return Err("Scheduler not initialized");
-    }
+
+    x86_64::instructions::interrupts::without_interrupts(|| {
+        let mut scheduler_lock = SCHEDULER.lock();
+        if let Some(ref mut scheduler) = *scheduler_lock {
+            scheduler.add_task(new_task);
+        } else {
+            return Err("Scheduler not initialized");
+        }
+        Ok(())
+    })?;
+    crate::serial_println!("launch_program: task added to scheduler");
 
     crate::serial_println!("launch_program: complete! Returning task ID.");
     Ok(task_id)
