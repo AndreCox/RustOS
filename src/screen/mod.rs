@@ -12,12 +12,11 @@ static FAILED_LOCKS: AtomicCounter = AtomicCounter::new(0);
 
 pub fn compositor_task() -> ! {
     let mut was_exclusive = false;
+    let mut last_blink = false;
     loop {
         let is_exclusive = EXCLUSIVE_GRAPHICS.load(Ordering::Relaxed);
         if let Some(mut guard) = crate::screen::renderer::WRITER.try_lock() {
             if let Some(writer) = guard.as_mut() {
-                crate::screen::renderer::apply_pending_commands(writer);
-
                 if !is_exclusive {
                     // 0. If we just exited exclusive mode, clear the screen
                     if was_exclusive {
@@ -40,59 +39,67 @@ pub fn compositor_task() -> ! {
                         crate::screen::graphics::draw_ui(writer.width);
                         LAST_UPTIME_DRAW.store(current_time, Ordering::Relaxed);
                     }
+
+                    // 3. Composite virtual framebuffers
+                    let vlist = vfb::snapshot_meta();
+                    for (ptr, width, height, owner, min_y, max_y) in vlist.iter() {
+                        if *owner == 0 {
+                            continue;
+                        }
+                        if *width == 0 || *height == 0 || *width > 4096 || *height > 4096 {
+                            continue;
+                        }
+                        if *min_y < *max_y {
+                            unsafe {
+                                let src_ptr = (*ptr) as *mut u32;
+                                let fb_ptr = writer.buffer.as_mut_ptr() as *mut u32;
+                                let stride = (writer.pitch / 4) as usize;
+                                let hw_width = writer.width as usize;
+                                if *width == hw_width {
+                                    for y in 0..*height {
+                                        core::ptr::copy_nonoverlapping(
+                                            src_row(src_ptr, y, *width),
+                                            dst_row(fb_ptr, y, stride),
+                                            *width,
+                                        );
+                                    }
+                                } else {
+                                    // Scaling... (implementation details)
+                                    for y in 0..*height {
+                                        let src = src_ptr.add(y * *width);
+                                        let dst0 = fb_ptr.add((y * 2) * stride);
+                                        let dst1 = fb_ptr.add((y * 2 + 1) * stride);
+                                        for x in 0..*width {
+                                            let px = *src.add(x);
+                                            *dst0.add(x * 2) = px;
+                                            *dst0.add(x * 2 + 1) = px;
+                                            *dst1.add(x * 2) = px;
+                                            *dst1.add(x * 2 + 1) = px;
+                                        }
+                                    }
+                                }
+                            }
+                            vfb::clear_dirty(*ptr as *mut u32);
+                            writer.mark_dirty(0, writer.height);
+                        }
+                    }
+
+                    // 4. Handle blinking cursor
+                    let uptime = crate::timer::get_uptime_ms();
+                    let blink = (uptime % 1000) < 500;
+                    if blink != last_blink {
+                        let char_h = writer.font.header.height as u64;
+                        writer.mark_dirty(writer.cursor_y, char_h);
+                        last_blink = blink;
+                    }
+                    writer.present_with_cursor(blink);
                 } else {
                     was_exclusive = true;
                     // Discard text buffer logs to prevent massive unrendered backlog
                     while let Some(_) = crate::io::log_buffer::DISPLAY_QUEUE.pop_char() {}
+                    writer.present(); // Empty present to clear needs_hw_update
                 }
-
-                // 3. Composite virtual framebuffers
-                let vlist = vfb::snapshot_meta();
-                for (ptr, width, height, owner, min_y, max_y) in vlist.iter() {
-                    if *owner == 0 {
-                        continue;
-                    }
-                    if *width == 0 || *height == 0 || *width > 4096 || *height > 4096 {
-                        continue;
-                    }
-                    if *min_y < *max_y {
-                        unsafe {
-                            let src_ptr = (*ptr) as *mut u32;
-                            let fb_ptr = writer.buffer.as_mut_ptr() as *mut u32;
-                            let stride = (writer.pitch / 4) as usize;
-                            let hw_width = writer.width as usize;
-                            if *width == hw_width {
-                                for y in 0..*height {
-                                    core::ptr::copy_nonoverlapping(
-                                        src_row(src_ptr, y, *width),
-                                        dst_row(fb_ptr, y, stride),
-                                        *width,
-                                    );
-                                }
-                            } else {
-                                // Scaling... (implementation details)
-                                for y in 0..*height {
-                                    let src = src_ptr.add(y * *width);
-                                    let dst0 = fb_ptr.add((y * 2) * stride);
-                                    let dst1 = fb_ptr.add((y * 2 + 1) * stride);
-                                    for x in 0..*width {
-                                        let px = *src.add(x);
-                                        *dst0.add(x * 2) = px;
-                                        *dst0.add(x * 2 + 1) = px;
-                                        *dst1.add(x * 2) = px;
-                                        *dst1.add(x * 2 + 1) = px;
-                                    }
-                                }
-                            }
-                        }
-                        vfb::clear_dirty(*ptr as *mut u32);
-                        writer.mark_dirty(0, writer.height);
-                    }
-                }
-                writer.present();
             }
-        } else {
-            // Diagnostic code
         }
         crate::timer::sleep_ms(16);
     }

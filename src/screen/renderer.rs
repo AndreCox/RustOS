@@ -7,41 +7,10 @@ use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use spin::Mutex;
 
 pub static WRITER: Mutex<Option<FramebufferWriter>> = Mutex::new(None);
-static PENDING_CLEAR: AtomicBool = AtomicBool::new(false);
-static PENDING_CURSOR: AtomicU64 = AtomicU64::new(u64::MAX);
-
 pub const HEADER_HEIGHT: u64 = 32;
 
-#[inline]
-fn pack_cursor(x: u64, y: u64) -> u64 {
-    ((y & 0xFFFF) << 16) | (x & 0xFFFF)
-}
+// Atomic flags and request methods have been removed in favor of in-band ESC sequences.
 
-#[inline]
-fn unpack_cursor(packed: u64) -> (u64, u64) {
-    (packed & 0xFFFF, (packed >> 16) & 0xFFFF)
-}
-
-pub fn request_clear_screen() {
-    crate::io::log_buffer::DISPLAY_QUEUE.clear();
-    PENDING_CLEAR.store(true, Ordering::Release);
-}
-
-pub fn request_set_cursor(x: u64, y: u64) {
-    PENDING_CURSOR.store(pack_cursor(x, y), Ordering::Release);
-}
-
-pub fn apply_pending_commands(writer: &mut FramebufferWriter<'_>) {
-    if PENDING_CLEAR.swap(false, Ordering::AcqRel) {
-        writer.clear_screen();
-    }
-
-    let packed = PENDING_CURSOR.swap(u64::MAX, Ordering::AcqRel);
-    if packed != u64::MAX {
-        let (x, y) = unpack_cursor(packed);
-        writer.set_cursor(x, y);
-    }
-}
 
 pub fn init(writer: FramebufferWriter<'static>) {
     *WRITER.lock() = Some(writer);
@@ -66,9 +35,13 @@ pub struct FramebufferWriter<'a> {
     pub pitch: u64,
     pub width: u64,
     pub height: u64,
-    cursor_x: u64,
-    cursor_y: u64,
+    pub cursor_x: u64,
+    pub cursor_y: u64,
+    old_cursor_y: u64,
     pub font: Font,
+    esc_buf: [u8; 16],
+    esc_idx: usize,
+    in_esc: bool,
 }
 
 impl<'a> FramebufferWriter<'a> {
@@ -95,7 +68,11 @@ impl<'a> FramebufferWriter<'a> {
             height,
             cursor_x: 0,
             cursor_y: HEADER_HEIGHT,
+            old_cursor_y: HEADER_HEIGHT,
             font: Font::new(FONT_DATA),
+            esc_buf: [0; 16],
+            esc_idx: 0,
+            in_esc: false,
         }
     }
 
@@ -211,11 +188,20 @@ impl<'a> FramebufferWriter<'a> {
     }
 
     pub fn put_char(&mut self, c: char) {
+        if self.in_esc {
+            self.handle_esc(c);
+            return;
+        }
+
         let char_w = self.font.header.width as u64;
         let char_h = self.font.header.height as u64;
 
         // 1. Handle cursor movement
         match c {
+            '\x1B' => {
+                self.in_esc = true;
+                self.esc_idx = 0;
+            }
             '\x08' => {
                 // Move one glyph left and clear that cell.
                 if self.cursor_x >= char_w {
@@ -254,9 +240,108 @@ impl<'a> FramebufferWriter<'a> {
         }
     }
 
+    fn handle_esc(&mut self, c: char) {
+        if self.esc_idx == 0 {
+            if c == '[' {
+                self.esc_idx += 1;
+            } else {
+                self.in_esc = false; // Invalid ESC sequence
+            }
+            return;
+        }
+
+        // Collect parameters
+        if c.is_ascii_digit() || c == ';' {
+            if self.esc_idx < self.esc_buf.len() {
+                self.esc_buf[self.esc_idx - 1] = c as u8;
+                self.esc_idx += 1;
+            }
+            return;
+        }
+
+        // Finalizer
+        match c {
+            'J' => {
+                // Clear screen
+                self.clear_screen();
+            }
+            'H' => {
+                // Set cursor position: \x1B[<line>;<col>H
+                let mut line = 0u64;
+                let mut col = 0u64;
+                let mut parsing_col = false;
+                let mut has_first = false;
+                let mut current = 0u64;
+
+                for i in 0..(self.esc_idx - 1) {
+                    let b = self.esc_buf[i];
+                    if b == b';' {
+                        line = current;
+                        current = 0;
+                        parsing_col = true;
+                        has_first = true;
+                    } else if b.is_ascii_digit() {
+                        current = current * 10 + (b - b'0') as u64;
+                    }
+                }
+                if parsing_col {
+                    col = current;
+                } else if has_first {
+                    // unexpected...
+                } else {
+                    line = current;
+                }
+
+                // Call set_cursor with the parsed coordinates
+                // Standard ANSI: \x1B[<line>;<col>H is 1-indexed.
+                let visual_line = line.saturating_sub(1);
+                let visual_col = col.saturating_sub(1);
+                
+                let char_w = self.font.header.width as u64;
+                let char_h = self.font.header.height as u64;
+                self.set_cursor(visual_col * char_w, visual_line * char_h);
+            }
+            _ => {}
+        }
+        self.in_esc = false;
+    }
+
     pub fn set_cursor(&mut self, x: u64, y: u64) {
+        // Mark old line as dirty to erase old cursor from screen
+        let char_h = self.font.header.height as u64;
+        self.mark_dirty(self.cursor_y, char_h);
+
         self.cursor_x = x;
-        self.cursor_y = y + HEADER_HEIGHT; // Ensure we don't draw in the header area
+        self.cursor_y = y + HEADER_HEIGHT;
+        self.old_cursor_y = self.cursor_y;
+        
+        // Mark new line as dirty too
+        self.mark_dirty(self.cursor_y, char_h);
+    }
+
+    pub fn draw_cursor_hw(&mut self, color: u32) {
+        let char_w = self.font.header.width as u64;
+        let char_h = self.font.header.height as u64;
+
+        if self.cursor_x + char_w > self.width || self.cursor_y + char_h > self.height {
+            return;
+        }
+
+        // Draw directly to hardware FB using a manual loop to avoided shadow buffer ghosting
+        let pitch = self.pitch as usize;
+        let x = self.cursor_x as usize;
+        let y = self.cursor_y as usize;
+
+        for row in 0..char_h as usize {
+            let offset = (y + row) * pitch + (x * 4);
+            if offset + 4 <= self.hardware_fb.len() {
+                unsafe {
+                    let ptr = self.hardware_fb.as_mut_ptr().add(offset) as *mut u32;
+                    ptr.write(color);
+                    ptr.add(1).write(color); // 2px wide
+                }
+            }
+        }
     }
 
     fn scroll(&mut self) {
@@ -340,6 +425,14 @@ impl<'a> FramebufferWriter<'a> {
             let dst = self.hardware_fb.as_mut_ptr().add(start_offset);
 
             Self::simd_memcpy(dst, src, len);
+        }
+    }
+
+    /// Special present that also draws the blinking cursor to hardware
+    pub fn present_with_cursor(&mut self, blink: bool) {
+        self.present();
+        if blink {
+            self.draw_cursor_hw(0xFFFFFFFF);
         }
     }
 

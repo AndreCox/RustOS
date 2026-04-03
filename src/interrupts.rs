@@ -480,13 +480,27 @@ pub extern "C" fn syscall_handler(frame: &mut InterruptStackFrame) -> u64 {
         }
         3 => {
             // sys_clear_screen()
-            crate::screen::renderer::request_clear_screen();
+            let q = &crate::io::log_buffer::DISPLAY_QUEUE;
+            q.push_char(0x1B);
+            q.push_char(b'[');
+            q.push_char(b'J');
         }
         4 => {
-            // sys_set_cursor(x, y)
+            // sys_set_cursor(x, y) - converts 0-indexed (x, y) to 1-indexed ANSI ESC[y+1;x+1H
             let x = (arg1 & 0xFFFF);
             let y = ((arg1 >> 16) & 0xFFFF);
-            crate::screen::renderer::request_set_cursor(x, y);
+            let q = &crate::io::log_buffer::DISPLAY_QUEUE;
+            
+            q.push_char(0x1B);
+            q.push_char(b'[');
+            
+            // Push y+1 (line) as digits
+            push_u64_digits(q, y + 1);
+            q.push_char(b';');
+            // Push x+1 (col) as digits
+            push_u64_digits(q, x + 1);
+            
+            q.push_char(b'H');
         }
         5 => {
             // sys_fs_read(path_ptr, out_buf_ptr, len) -> bytes_read | u64::MAX on error
@@ -524,7 +538,23 @@ pub extern "C" fn syscall_handler(frame: &mut InterruptStackFrame) -> u64 {
     (frame as *const InterruptStackFrame as u64)
 }
 
-// Assembly code for ISR stubs and common handler
+fn push_u64_digits(q: &crate::io::log_buffer::LogQueue, mut n: u64) {
+    if n == 0 {
+        q.push_char(b'0');
+        return;
+    }
+    let mut buf = [0u8; 20];
+    let mut i = 0;
+    while n > 0 {
+        buf[i] = (n % 10) as u8 + b'0';
+        n /= 10;
+        i += 1;
+    }
+    while i > 0 {
+        i -= 1;
+        q.push_char(buf[i]);
+    }
+}
 global_asm!(
     r#"
     .altmacro
