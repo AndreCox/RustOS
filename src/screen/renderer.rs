@@ -23,6 +23,7 @@ fn unpack_cursor(packed: u64) -> (u64, u64) {
 }
 
 pub fn request_clear_screen() {
+    crate::io::log_buffer::DISPLAY_QUEUE.clear();
     PENDING_CLEAR.store(true, Ordering::Release);
 }
 

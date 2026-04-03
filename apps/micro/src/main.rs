@@ -20,20 +20,14 @@ const SYS_FS_READ: u64 = 5;
 const SYS_FS_WRITE: u64 = 6;
 const SYS_GET_SCANCODE: u64 = 7;
 const SYS_YIELD: u64 = 8;
+const SYS_GET_KEY: u64 = 9;
 
 #[derive(Clone, Copy)]
 enum Event {
     Char(u8),
     Enter,
     Backspace,
-    Delete,
     Tab,
-    Left,
-    Right,
-    Up,
-    Down,
-    Home,
-    End,
     Save,
     Exit,
 }
@@ -272,40 +266,12 @@ impl Editor {
                 self.backspace();
                 true
             }
-            Event::Delete => {
-                self.delete_at_cursor();
-                true
-            }
             Event::Tab => {
                 self.insert_byte(b' ');
                 self.insert_byte(b' ');
                 self.insert_byte(b' ');
                 self.insert_byte(b' ');
                 true
-            }
-            Event::Left => {
-                self.move_left();
-                false
-            }
-            Event::Right => {
-                self.move_right();
-                false
-            }
-            Event::Up => {
-                self.move_up();
-                false
-            }
-            Event::Down => {
-                self.move_down();
-                false
-            }
-            Event::Home => {
-                self.move_home();
-                false
-            }
-            Event::End => {
-                self.move_end();
-                false
             }
             Event::Save => {
                 self.save_file();
@@ -316,6 +282,7 @@ impl Editor {
                     self.set_status("Unsaved changes, press Ctrl-S first");
                     return false;
                 }
+                syscall_clear_screen();
                 syscall_exit();
             }
         }
@@ -381,9 +348,9 @@ pub extern "C" fn _start() -> ! {
     }
 
     loop {
-        let scancode = syscall_get_scancode();
-        if scancode != 0 {
-            if let Some(event) = decode_scancode(scancode as u8) {
+        let key = syscall_get_key();
+        if key != 0 {
+            if let Some(event) = decode_key(key) {
                 let needs_redraw = unsafe { (*editor_ptr).handle_event(event) };
                 if needs_redraw {
                     unsafe {
@@ -396,292 +363,15 @@ pub extern "C" fn _start() -> ! {
     }
 }
 
-fn decode_scancode(scancode: u8) -> Option<Event> {
-    use core::sync::atomic::{AtomicBool, Ordering};
-
-    static SHIFT: AtomicBool = AtomicBool::new(false);
-    static CTRL: AtomicBool = AtomicBool::new(false);
-    static E0_PREFIX: AtomicBool = AtomicBool::new(false);
-
-    let is_extended = if scancode == 0xE0 {
-        E0_PREFIX.store(true, Ordering::Relaxed);
-        return None;
-    } else {
-        E0_PREFIX.swap(false, Ordering::Relaxed)
-    };
-
-    let released = scancode & 0x80 != 0;
-    let code = scancode & 0x7F;
-
-    if is_extended {
-        if released {
-            return None;
-        }
-
-        return match code {
-            0x48 => Some(Event::Up),
-            0x50 => Some(Event::Down),
-            0x4B => Some(Event::Left),
-            0x4D => Some(Event::Right),
-            0x47 => Some(Event::Home),
-            0x4F => Some(Event::End),
-            0x53 => Some(Event::Delete),
-            _ => None,
-        };
-    }
-
-    match code {
-        0x2A | 0x36 => {
-            SHIFT.store(!released, Ordering::Relaxed);
-            None
-        }
-        0x1D => {
-            CTRL.store(!released, Ordering::Relaxed);
-            None
-        }
-        _ if released => None,
-        0x0E => Some(Event::Backspace),
-        0x1C => Some(Event::Enter),
-        0x0F => Some(Event::Tab),
-        0x39 => Some(Event::Char(b' ')),
-        0x01 => Some(Event::Exit),
-        0x1F if CTRL.load(Ordering::Relaxed) => Some(Event::Save),
-        0x2D if CTRL.load(Ordering::Relaxed) => Some(Event::Exit),
-        0x1E => Some(Event::Char(if SHIFT.load(Ordering::Relaxed) {
-            b'A'
-        } else {
-            b'a'
-        })),
-        0x30 => Some(Event::Char(if SHIFT.load(Ordering::Relaxed) {
-            b'B'
-        } else {
-            b'b'
-        })),
-        0x2E => Some(Event::Char(if SHIFT.load(Ordering::Relaxed) {
-            b'C'
-        } else {
-            b'c'
-        })),
-        0x20 => Some(Event::Char(if SHIFT.load(Ordering::Relaxed) {
-            b'D'
-        } else {
-            b'd'
-        })),
-        0x12 => Some(Event::Char(if SHIFT.load(Ordering::Relaxed) {
-            b'E'
-        } else {
-            b'e'
-        })),
-        0x21 => Some(Event::Char(if SHIFT.load(Ordering::Relaxed) {
-            b'F'
-        } else {
-            b'f'
-        })),
-        0x22 => Some(Event::Char(if SHIFT.load(Ordering::Relaxed) {
-            b'G'
-        } else {
-            b'g'
-        })),
-        0x23 => Some(Event::Char(if SHIFT.load(Ordering::Relaxed) {
-            b'H'
-        } else {
-            b'h'
-        })),
-        0x17 => Some(Event::Char(if SHIFT.load(Ordering::Relaxed) {
-            b'I'
-        } else {
-            b'i'
-        })),
-        0x24 => Some(Event::Char(if SHIFT.load(Ordering::Relaxed) {
-            b'J'
-        } else {
-            b'j'
-        })),
-        0x25 => Some(Event::Char(if SHIFT.load(Ordering::Relaxed) {
-            b'K'
-        } else {
-            b'k'
-        })),
-        0x26 => Some(Event::Char(if SHIFT.load(Ordering::Relaxed) {
-            b'L'
-        } else {
-            b'l'
-        })),
-        0x32 => Some(Event::Char(if SHIFT.load(Ordering::Relaxed) {
-            b'M'
-        } else {
-            b'm'
-        })),
-        0x31 => Some(Event::Char(if SHIFT.load(Ordering::Relaxed) {
-            b'N'
-        } else {
-            b'n'
-        })),
-        0x18 => Some(Event::Char(if SHIFT.load(Ordering::Relaxed) {
-            b'O'
-        } else {
-            b'o'
-        })),
-        0x19 => Some(Event::Char(if SHIFT.load(Ordering::Relaxed) {
-            b'P'
-        } else {
-            b'p'
-        })),
-        0x10 => Some(Event::Char(if SHIFT.load(Ordering::Relaxed) {
-            b'Q'
-        } else {
-            b'q'
-        })),
-        0x13 => Some(Event::Char(if SHIFT.load(Ordering::Relaxed) {
-            b'R'
-        } else {
-            b'r'
-        })),
-        0x1F => Some(Event::Char(if SHIFT.load(Ordering::Relaxed) {
-            b'S'
-        } else {
-            b's'
-        })),
-        0x14 => Some(Event::Char(if SHIFT.load(Ordering::Relaxed) {
-            b'T'
-        } else {
-            b't'
-        })),
-        0x16 => Some(Event::Char(if SHIFT.load(Ordering::Relaxed) {
-            b'U'
-        } else {
-            b'u'
-        })),
-        0x2F => Some(Event::Char(if SHIFT.load(Ordering::Relaxed) {
-            b'V'
-        } else {
-            b'v'
-        })),
-        0x11 => Some(Event::Char(if SHIFT.load(Ordering::Relaxed) {
-            b'W'
-        } else {
-            b'w'
-        })),
-        0x2D => Some(Event::Char(if SHIFT.load(Ordering::Relaxed) {
-            b'X'
-        } else {
-            b'x'
-        })),
-        0x15 => Some(Event::Char(if SHIFT.load(Ordering::Relaxed) {
-            b'Y'
-        } else {
-            b'y'
-        })),
-        0x2C => Some(Event::Char(if SHIFT.load(Ordering::Relaxed) {
-            b'Z'
-        } else {
-            b'z'
-        })),
-        0x02 => Some(Event::Char(if SHIFT.load(Ordering::Relaxed) {
-            b'!'
-        } else {
-            b'1'
-        })),
-        0x03 => Some(Event::Char(if SHIFT.load(Ordering::Relaxed) {
-            b'@'
-        } else {
-            b'2'
-        })),
-        0x04 => Some(Event::Char(if SHIFT.load(Ordering::Relaxed) {
-            b'#'
-        } else {
-            b'3'
-        })),
-        0x05 => Some(Event::Char(if SHIFT.load(Ordering::Relaxed) {
-            b'$'
-        } else {
-            b'4'
-        })),
-        0x06 => Some(Event::Char(if SHIFT.load(Ordering::Relaxed) {
-            b'%'
-        } else {
-            b'5'
-        })),
-        0x07 => Some(Event::Char(if SHIFT.load(Ordering::Relaxed) {
-            b'^'
-        } else {
-            b'6'
-        })),
-        0x08 => Some(Event::Char(if SHIFT.load(Ordering::Relaxed) {
-            b'&'
-        } else {
-            b'7'
-        })),
-        0x09 => Some(Event::Char(if SHIFT.load(Ordering::Relaxed) {
-            b'*'
-        } else {
-            b'8'
-        })),
-        0x0A => Some(Event::Char(if SHIFT.load(Ordering::Relaxed) {
-            b'('
-        } else {
-            b'9'
-        })),
-        0x0B => Some(Event::Char(if SHIFT.load(Ordering::Relaxed) {
-            b')'
-        } else {
-            b'0'
-        })),
-        0x0C => Some(Event::Char(if SHIFT.load(Ordering::Relaxed) {
-            b'_'
-        } else {
-            b'-'
-        })),
-        0x0D => Some(Event::Char(if SHIFT.load(Ordering::Relaxed) {
-            b'+'
-        } else {
-            b'='
-        })),
-        0x1A => Some(Event::Char(if SHIFT.load(Ordering::Relaxed) {
-            b'{'
-        } else {
-            b'['
-        })),
-        0x1B => Some(Event::Char(if SHIFT.load(Ordering::Relaxed) {
-            b'}'
-        } else {
-            b']'
-        })),
-        0x27 => Some(Event::Char(if SHIFT.load(Ordering::Relaxed) {
-            b':'
-        } else {
-            b';'
-        })),
-        0x28 => Some(Event::Char(if SHIFT.load(Ordering::Relaxed) {
-            b'\"'
-        } else {
-            b'\''
-        })),
-        0x29 => Some(Event::Char(if SHIFT.load(Ordering::Relaxed) {
-            b'~'
-        } else {
-            b'`'
-        })),
-        0x2B => Some(Event::Char(if SHIFT.load(Ordering::Relaxed) {
-            b'|'
-        } else {
-            b'\\'
-        })),
-        0x33 => Some(Event::Char(if SHIFT.load(Ordering::Relaxed) {
-            b'<'
-        } else {
-            b','
-        })),
-        0x34 => Some(Event::Char(if SHIFT.load(Ordering::Relaxed) {
-            b'>'
-        } else {
-            b'.'
-        })),
-        0x35 => Some(Event::Char(if SHIFT.load(Ordering::Relaxed) {
-            b'?'
-        } else {
-            b'/'
-        })),
+fn decode_key(key: u8) -> Option<Event> {
+    match key {
+        0 => None,
+        b'\n' => Some(Event::Enter),
+        b'\x08' => Some(Event::Backspace),
+        b'\t' => Some(Event::Tab),
+        0x13 => Some(Event::Save),
+        0x18 => Some(Event::Exit),
+        0x20..=0x7e => Some(Event::Char(key)),
         _ => None,
     }
 }
@@ -735,12 +425,23 @@ fn syscall_clear_screen() {
 }
 
 fn syscall_get_scancode() -> u8 {
-    let mut result: u64;
+    let mut result = SYS_GET_SCANCODE;
     unsafe {
         core::arch::asm!(
             "int 0x80",
-            in("rax") SYS_GET_SCANCODE,
-            lateout("rax") result,
+            inlateout("rax") result,
+            options(nostack, preserves_flags)
+        );
+    }
+    result as u8
+}
+
+fn syscall_get_key() -> u8 {
+    let mut result = SYS_GET_KEY;
+    unsafe {
+        core::arch::asm!(
+            "int 0x80",
+            inlateout("rax") result,
             options(nostack, preserves_flags)
         );
     }
@@ -768,15 +469,14 @@ fn syscall_exit() -> ! {
 }
 
 fn syscall_fs_read(path: *const u8, out_buf: *mut u8, len: u64) -> u64 {
-    let mut result: u64;
+    let mut result = SYS_FS_READ;
     unsafe {
         core::arch::asm!(
             "int 0x80",
-            in("rax") SYS_FS_READ,
+            inlateout("rax") result,
             in("rdi") path as u64,
             in("rsi") out_buf as u64,
             in("rdx") len,
-            lateout("rax") result,
             options(nostack, preserves_flags)
         );
     }
@@ -784,15 +484,14 @@ fn syscall_fs_read(path: *const u8, out_buf: *mut u8, len: u64) -> u64 {
 }
 
 fn syscall_fs_write(path: *const u8, input_buf: *const u8, len: u64) -> u64 {
-    let mut result: u64;
+    let mut result = SYS_FS_WRITE;
     unsafe {
         core::arch::asm!(
             "int 0x80",
-            in("rax") SYS_FS_WRITE,
+            inlateout("rax") result,
             in("rdi") path as u64,
             in("rsi") input_buf as u64,
             in("rdx") len,
-            lateout("rax") result,
             options(nostack, preserves_flags)
         );
     }

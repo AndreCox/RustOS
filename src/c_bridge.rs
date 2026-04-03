@@ -476,8 +476,8 @@ pub unsafe extern "C" fn exit(status: c_int) -> ! {
 
     // 1. Get owner ID safely without interrupts
     let mut owner_id = 0;
-    x86_64::instructions::interrupts::without_interrupts(|| {
-        if let Some(ref mut sched) = *crate::multitasker::scheduler::SCHEDULER.lock() {
+    crate::multitasker::scheduler::with_scheduler(|sched_slot| {
+        if let Some(ref mut sched) = *sched_slot {
             owner_id = sched.get_current_task_id();
         }
     });
@@ -489,8 +489,8 @@ pub unsafe extern "C" fn exit(status: c_int) -> ! {
     }
 
     // 3. Mark Killed and immediately yield without interrupts
-    x86_64::instructions::interrupts::without_interrupts(|| {
-        if let Some(ref mut sched) = *crate::multitasker::scheduler::SCHEDULER.lock() {
+    crate::multitasker::scheduler::with_scheduler(|sched_slot| {
+        if let Some(ref mut sched) = *sched_slot {
             if let Some(ref mut task) = sched.current_task {
                 task.status = crate::multitasker::task::TaskStatus::Killed;
             }

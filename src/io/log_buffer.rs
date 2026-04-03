@@ -53,6 +53,11 @@ impl LogQueue {
             .store((t + 1) % LOG_BUFFER_SIZE, Ordering::Release);
         Some(c)
     }
+
+    pub fn clear(&self) {
+        let head = self.head.load(Ordering::Acquire);
+        self.tail.store(head, Ordering::Release);
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

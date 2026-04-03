@@ -277,92 +277,93 @@ fn load_program_image(bytes: &[u8]) -> Result<(Vec<u8>, u64), &'static str> {
 pub fn launch_program(filename: &str) -> Result<u64, &'static str> {
     crate::serial_println!("launch_program: starting for {}", filename);
 
-    let mut fs_lock = fs::FILESYSTEM.lock();
-    crate::serial_println!("launch_program: acquired FS lock");
-    let fs = fs_lock.as_mut().ok_or("Filesystem not initialized")?;
+    let file_content = fs::with_filesystem(|fs_slot| -> Result<Vec<u8>, &'static str> {
+        crate::serial_println!("launch_program: acquired FS lock");
+        let fs = fs_slot.as_mut().ok_or("Filesystem not initialized")?;
 
-    let mut actual_path = None;
+        let mut actual_path = None;
 
-    // If a path was provided, try it directly first.
-    if filename.contains('/') {
-        if fs.get_ro_file(filename).is_ok() {
-            actual_path = Some(filename.into());
-        } else {
-            let with_bin = crate::alloc::format!("{}.bin", filename);
-            if fs.get_ro_file(with_bin.as_str()).is_ok() {
-                actual_path = Some(with_bin);
+        // If a path was provided, try it directly first.
+        if filename.contains('/') {
+            if fs.get_ro_file(filename).is_ok() {
+                actual_path = Some(filename.into());
+            } else {
+                let with_bin = crate::alloc::format!("{}.bin", filename);
+                if fs.get_ro_file(with_bin.as_str()).is_ok() {
+                    actual_path = Some(with_bin);
+                }
             }
         }
-    }
 
-    // Backwards-compatible root lookup by bare program name.
-    if actual_path.is_none() {
-        if let Ok(dir_iter) = fs.read_dir("/") {
-            crate::serial_println!("launch_program: successfully read root dir");
-            let target = filename
-                .to_uppercase()
-                .replace(".", "")
-                .replace("\\", "")
-                .replace("/", "");
-            for entry_result in dir_iter {
-                if let Ok(entry) = entry_result {
-                    if entry.is_file() {
-                        let p_stripped = crate::alloc::format!("{}", entry.path())
-                            .to_uppercase()
-                            .replace(".", "")
-                            .replace("\\", "")
-                            .replace("/", "");
-                        if p_stripped == target
-                            || p_stripped == crate::alloc::format!("{}BIN", target)
-                        {
-                            actual_path = Some(crate::alloc::format!("{}", entry.path()));
-                            break;
+        // Backwards-compatible root lookup by bare program name.
+        if actual_path.is_none() {
+            if let Ok(dir_iter) = fs.read_dir("/") {
+                crate::serial_println!("launch_program: successfully read root dir");
+                let target = filename
+                    .to_uppercase()
+                    .replace(".", "")
+                    .replace("\\", "")
+                    .replace("/", "");
+                for entry_result in dir_iter {
+                    if let Ok(entry) = entry_result {
+                        if entry.is_file() {
+                            let p_stripped = crate::alloc::format!("{}", entry.path())
+                                .to_uppercase()
+                                .replace(".", "")
+                                .replace("\\", "")
+                                .replace("/", "");
+                            if p_stripped == target
+                                || p_stripped == crate::alloc::format!("{}BIN", target)
+                            {
+                                actual_path = Some(crate::alloc::format!("{}", entry.path()));
+                                break;
+                            }
                         }
                     }
                 }
             }
         }
-    }
 
-    let actual_path = actual_path.ok_or("File not found on FAT32 filesystem")?;
-    crate::serial_println!("launch_program: found file at path {}", actual_path);
+        let actual_path = actual_path.ok_or("File not found on FAT32 filesystem")?;
+        crate::serial_println!("launch_program: found file at path {}", actual_path);
 
-    let mut file = match fs.get_ro_file(actual_path.as_str()) {
-        Ok(f) => f,
-        Err(_) => return Err("Failed to open found file"),
-    };
-    crate::serial_println!("launch_program: successfully opened file");
+        let mut file = match fs.get_ro_file(actual_path.as_str()) {
+            Ok(f) => f,
+            Err(_) => return Err("Failed to open found file"),
+        };
+        crate::serial_println!("launch_program: successfully opened file");
 
-    // Note: To match simple-fatfs, we might read chunk by chunk or get length.
-    // Actually, simple-fatfs provides the file size and stream reading.
-    let size = file.file_size() as usize;
-    crate::serial_println!("launch_program: file size is {}", size);
-    if size == 0 {
-        return Err("File is empty");
-    }
-
-    let mut file_content: Vec<u8> = alloc::vec::Vec::with_capacity(size);
-    let mut buf = [0u8; 512];
-    let mut total_read = 0;
-
-    crate::serial_println!("launch_program: starting chunked read loop");
-    loop {
-        match embedded_io::Read::read(&mut file, &mut buf) {
-            Ok(0) => break,
-            Ok(n) => {
-                file_content.extend_from_slice(&buf[..n]);
-                total_read += n;
-                if total_read >= size {
-                    break;
-                }
-            }
-            Err(_) => return Err("Error reading file"),
+        let size = file.file_size() as usize;
+        crate::serial_println!("launch_program: file size is {}", size);
+        if size == 0 {
+            return Err("File is empty");
         }
-    }
-    crate::serial_println!(
-        "launch_program: finished read loop. Read {} bytes",
-        total_read
-    );
+
+        let mut file_content: Vec<u8> = alloc::vec::Vec::with_capacity(size);
+        let mut buf = [0u8; 512];
+        let mut total_read = 0;
+
+        crate::serial_println!("launch_program: starting chunked read loop");
+        loop {
+            match embedded_io::Read::read(&mut file, &mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    file_content.extend_from_slice(&buf[..n]);
+                    total_read += n;
+                    if total_read >= size {
+                        break;
+                    }
+                }
+                Err(_) => return Err("Error reading file"),
+            }
+        }
+        crate::serial_println!(
+            "launch_program: finished read loop. Read {} bytes",
+            total_read
+        );
+
+        Ok(file_content)
+    })?;
 
     let (program_image, entry_offset) = load_elf_image(&file_content)?;
 
@@ -382,9 +383,12 @@ pub fn launch_program(filename: &str) -> Result<u64, &'static str> {
     let new_task = Task::new(task_id, entry_point);
     crate::serial_println!("launch_program: created task");
 
-    x86_64::instructions::interrupts::without_interrupts(|| {
-        let mut scheduler_lock = SCHEDULER.lock();
-        if let Some(ref mut scheduler) = *scheduler_lock {
+    crate::multitasker::scheduler::with_scheduler(|scheduler_slot| {
+        if let Some(ref mut scheduler) = *scheduler_slot {
+            // Hand keyboard focus to the new task before interrupts can run it.
+            // Otherwise a very short-lived program like `hello` can exit before
+            // we switch focus, and the launcher would then point focus at a dead task.
+            crate::io::keyboard::set_focus_and_clear(task_id);
             scheduler.add_task(new_task);
         } else {
             return Err("Scheduler not initialized");

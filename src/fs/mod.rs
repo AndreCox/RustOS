@@ -4,12 +4,22 @@ use crate::fs::fat_driver::AtaIoWrapper;
 use crate::io::ata_driver::AtaPio;
 use lazy_static::lazy_static;
 use spin::Mutex;
+use x86_64::instructions::interrupts;
 // Import DefaultClock as indicated by the compiler
 use simple_fatfs::{DefaultClock, FSOptions, FileSystem};
 
 lazy_static! {
     // Change () to DefaultClock
     pub static ref FILESYSTEM: Mutex<Option<FileSystem<AtaIoWrapper, DefaultClock>>> = Mutex::new(None);
+}
+
+pub fn with_filesystem<R>(
+    f: impl FnOnce(&mut Option<FileSystem<AtaIoWrapper, DefaultClock>>) -> R,
+) -> R {
+    interrupts::without_interrupts(|| {
+        let mut fs_lock = FILESYSTEM.lock();
+        f(&mut fs_lock)
+    })
 }
 
 pub fn init_fs() {
@@ -42,8 +52,7 @@ pub fn init_fs() {
 
     match FileSystem::new(wrapper, options) {
         Ok(fs) => {
-            let mut fs_lock = FILESYSTEM.lock();
-            *fs_lock = Some(fs);
+            with_filesystem(|slot| *slot = Some(fs));
             crate::println!("Filesystem: FAT32 mounted successfully.");
         }
         Err(e) => {

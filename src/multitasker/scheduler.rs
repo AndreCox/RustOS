@@ -1,6 +1,7 @@
 use super::task::Task;
 use crate::alloc::collections::VecDeque;
 use spin::Mutex;
+use x86_64::instructions::interrupts;
 
 pub struct Scheduler {
     pub tasks: VecDeque<Task>,
@@ -83,9 +84,6 @@ impl Scheduler {
                         core::arch::asm!("fxrstor [{}]", in(reg) &task.fpu_state.data);
                     }
 
-                    if task.id >= 100 {
-                        crate::serial_println!("Scheduler: Switching TO task {}", task.id);
-                    }
                     self.current_task = Some(task);
                     return next_sp;
                 } else {
@@ -101,3 +99,10 @@ impl Scheduler {
 }
 
 pub static SCHEDULER: Mutex<Option<Scheduler>> = Mutex::new(None);
+
+pub fn with_scheduler<R>(f: impl FnOnce(&mut Option<Scheduler>) -> R) -> R {
+    interrupts::without_interrupts(|| {
+        let mut scheduler_lock = SCHEDULER.lock();
+        f(&mut scheduler_lock)
+    })
+}

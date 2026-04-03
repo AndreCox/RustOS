@@ -46,8 +46,8 @@ pub unsafe extern "C" fn DG_Init() {
     // Allocate a virtual framebuffer for DOOM so it doesn't touch the hardware directly
     // Use the current task id as owner if available
     let mut owner_id = 0;
-    x86_64::instructions::interrupts::without_interrupts(|| {
-        if let Some(ref mut sched) = *crate::multitasker::scheduler::SCHEDULER.lock() {
+    crate::multitasker::scheduler::with_scheduler(|sched_slot| {
+        if let Some(ref mut sched) = *sched_slot {
             owner_id = sched.get_current_task_id();
         }
     });
