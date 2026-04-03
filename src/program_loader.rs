@@ -120,8 +120,11 @@ fn load_elf_image(bytes: &[u8]) -> Result<(Vec<u8>, u64), &'static str> {
     let image_size = max_vaddr
         .checked_sub(min_vaddr)
         .ok_or("Invalid ELF memory layout")? as usize;
-    let mut image = Vec::with_capacity(image_size);
-    image.resize(image_size, 0);
+    let layout = crate::alloc::alloc::Layout::from_size_align(image_size, 4096)
+        .map_err(|_| "Invalid memory layout")?;
+    let ptr = unsafe { crate::alloc::alloc::alloc_zeroed(layout) };
+    if ptr.is_null() { return Err("Out of memory"); }
+    let mut image = unsafe { Vec::from_raw_parts(ptr, image_size, image_size) };
 
     for segment in loadable_segments {
         let file_start = segment.p_offset as usize;
@@ -238,8 +241,11 @@ fn load_program_image(bytes: &[u8]) -> Result<(Vec<u8>, u64), &'static str> {
         let image_size = max_vaddr
             .checked_sub(min_vaddr)
             .ok_or("Invalid ELF memory layout")? as usize;
-        let mut image = Vec::with_capacity(image_size);
-        image.resize(image_size, 0);
+        let layout = crate::alloc::alloc::Layout::from_size_align(image_size, 4096)
+            .map_err(|_| "Invalid memory layout")?;
+        let ptr = unsafe { crate::alloc::alloc::alloc_zeroed(layout) };
+        if ptr.is_null() { return Err("Out of memory"); }
+        let mut image = unsafe { Vec::from_raw_parts(ptr, image_size, image_size) };
 
         for segment in loadable_segments {
             let file_start = segment.p_offset as usize;

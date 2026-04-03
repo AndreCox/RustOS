@@ -15,7 +15,7 @@ use limine::request::HhdmRequest;
 use limine::{BaseRevision, request::FramebufferRequest};
 
 // Import modules
-mod c_bridge; // C bridge for using standard C functions
+
 mod fs; // Filesystem handling (FAT32)
 mod globals; // Global variables and constants
 mod helpers; // Helper function
