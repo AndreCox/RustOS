@@ -383,7 +383,7 @@ pub extern "C" fn exception_handler(frame: &InterruptStackFrame) -> u64 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn syscall_handler(frame: &InterruptStackFrame) -> u64 {
+pub extern "C" fn syscall_handler(frame: &mut InterruptStackFrame) -> u64 {
     let syscall_nr = frame.rax;
     let arg1 = frame.rdi;
     let arg2 = frame.rsi;
@@ -422,17 +422,23 @@ pub extern "C" fn syscall_handler(frame: &InterruptStackFrame) -> u64 {
         }
         5 => {
             // sys_fs_read(path_ptr, out_buf_ptr, len) -> bytes_read | u64::MAX on error
-            return unsafe { sys_fs_read(arg1, arg2, arg3) };
+            frame.rax = unsafe { sys_fs_read(arg1, arg2, arg3) };
         }
         6 => {
             // sys_fs_write(path_ptr, in_buf_ptr, len) -> bytes_written | u64::MAX on error
-            return unsafe { sys_fs_write(arg1, arg2, arg3) };
+            frame.rax = unsafe { sys_fs_write(arg1, arg2, arg3) };
         }
         7 => {
             // sys_get_scancode() -> returns next raw scancode byte, or 0 if none
-            if let Some(scancode) = SCANCODE_QUEUE.pop() {
-                return scancode as u64;
-            }
+            frame.rax = SCANCODE_QUEUE.pop().map(|s| s as u64).unwrap_or(0);
+        }
+        9 => {
+            // sys_get_key() -> returns next translated key byte, or 0 if none
+            frame.rax = SCANCODE_QUEUE
+                .pop()
+                .and_then(|s| crate::io::keyboard::scancode_to_byte(s))
+                .map(|b| b as u64)
+                .unwrap_or(0);
         }
         8 => {
             // sys_yield() -> cooperate with the scheduler
