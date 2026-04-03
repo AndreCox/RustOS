@@ -43,7 +43,11 @@
 
 // TODO: There are separate RANGECHECK defines for different games, but this
 // is common code. Fix this.
+// In the freestanding external-framebuffer port we prefer graceful clipping
+// over hard aborts during startup/UI patch draws.
+#if !defined(DOOMGENERIC_EXTERNAL_FRAMEBUFFER)
 #define RANGECHECK
+#endif
 
 // Blending table used for fuzzpatch, etc.
 // Only used in Heretic/Hexen

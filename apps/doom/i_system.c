@@ -363,10 +363,25 @@ void I_Error (char *error, ...)
     atexit_listentry_t *entry;
     boolean exit_gui_popup;
 
+#if defined(DOOMGENERIC_EXTERNAL_FRAMEBUFFER)
+    // Minimal, deterministic fatal path for freestanding target.
+    if (error != NULL)
+    {
+        puts(error);
+    }
+    else
+    {
+        puts("I_Error: (null)");
+    }
+    exit(-1);
+#endif
+
     if (already_quitting)
     {
         fprintf(stderr, "Warning: recursive call to I_Error detected.\n");
-#if ORIGCODE
+    #if defined(DOOMGENERIC_EXTERNAL_FRAMEBUFFER)
+        exit(-1);
+    #elif ORIGCODE
         exit(-1);
 #endif
     }
@@ -382,6 +397,13 @@ void I_Error (char *error, ...)
     fprintf(stderr, "\n\n");
     va_end(argptr);
     fflush(stderr);
+
+#if defined(DOOMGENERIC_EXTERNAL_FRAMEBUFFER)
+    // In the freestanding port we avoid complex shutdown paths here because
+    // several registered run_on_error callbacks assume host services and can
+    // recursively re-enter I_Error, hiding the original failure reason.
+    exit(-1);
+#endif
 
     // Write a copy of the message into buffer.
     va_start(argptr, error);

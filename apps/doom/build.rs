@@ -91,6 +91,7 @@ fn main() {
         .include("include/")
         .flag("-std=gnu89")
         .flag("-ffreestanding")
+        .flag("-mno-red-zone")
         .flag("-fPIC")
         .flag("-include")
         .flag("freestanding_fix.h")

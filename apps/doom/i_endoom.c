@@ -22,7 +22,7 @@
 #include "doomtype.h"
 #include "i_video.h"
 
-#ifdef ORIGCODE
+#if defined(ORIGCODE) && defined(HAVE_TXT_MAIN)
 #include "txt_main.h"
 #endif
 
@@ -41,7 +41,7 @@
 
 void I_Endoom(byte *endoom_data)
 {
-#ifdef ORIGCODE
+#if defined(ORIGCODE) && defined(HAVE_TXT_MAIN)
     unsigned char *screendata;
     int y;
     int indent;
@@ -95,6 +95,10 @@ void I_Endoom(byte *endoom_data)
 
     // allegro exit should have been run already and so we should be in text mode again
     movedata(_my_ds(), (unsigned) endoom_data, _dos_ds, 0xB8000UL, ENDOOM_W * ENDOOM_H * 2);
+
+#else
+
+    (void) endoom_data;
 
 #endif
 }
