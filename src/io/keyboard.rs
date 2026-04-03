@@ -182,6 +182,16 @@ pub fn scancode_to_byte(scancode: u8) -> Option<u8> {
         0x39 => Some(b' '),
         0x0F => Some(b'\t'),
         0x0E => Some(b'\x08'),
+
+        // --- Arrow Keys and Navigation (Extended scancodes often preceded by 0xE0) ---
+        0x48 => Some(0x80), // Up
+        0x50 => Some(0x81), // Down
+        0x4B => Some(0x82), // Left
+        0x4D => Some(0x83), // Right
+        0x47 => Some(0x84), // Home
+        0x4F => Some(0x85), // End
+        0x53 => Some(0x86), // Delete
+
         _ => None,
     }
 }

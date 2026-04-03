@@ -8,7 +8,7 @@ fn panic(_info: &core::panic::PanicInfo) -> ! {
     loop {}
 }
 
-const FILE_PATH: &[u8] = b"/MICRO.TXT\0";
+const FILE_PATH: &[u8] = b"/PICO.TXT\0";
 const MAX_BUFFER: usize = 32768;
 const VIEW_LINES: usize = 28;
 
@@ -30,6 +30,13 @@ enum Event {
     Tab,
     Save,
     Exit,
+    Up,
+    Down,
+    Left,
+    Right,
+    Home,
+    End,
+    Delete,
 }
 
 struct Editor {
@@ -87,14 +94,14 @@ impl Editor {
             self.len = 0;
             self.cursor = 0;
             self.dirty = false;
-            self.set_status("New file: /MICRO.TXT");
+            self.set_status("New file: /PICO.TXT");
             return;
         }
 
         self.len = min(read as usize, MAX_BUFFER);
         self.cursor = 0;
         self.dirty = false;
-        self.set_status("Loaded /MICRO.TXT");
+        self.set_status("Loaded /PICO.TXT");
     }
 
     fn save_file(&mut self) {
@@ -103,7 +110,7 @@ impl Editor {
             self.set_status("Save failed");
         } else {
             self.dirty = false;
-            self.set_status("Saved /MICRO.TXT");
+            self.set_status("Saved /PICO.TXT");
         }
     }
 
@@ -294,6 +301,34 @@ impl Editor {
                 syscall_exit();
                 true
             }
+            Event::Up => {
+                self.move_up();
+                true
+            }
+            Event::Down => {
+                self.move_down();
+                true
+            }
+            Event::Left => {
+                self.move_left();
+                true
+            }
+            Event::Right => {
+                self.move_right();
+                true
+            }
+            Event::Home => {
+                self.move_home();
+                true
+            }
+            Event::End => {
+                self.move_end();
+                true
+            }
+            Event::Delete => {
+                self.delete_at_cursor();
+                true
+            }
         }
     }
 
@@ -308,7 +343,7 @@ impl Editor {
         let (line, col) = self.cursor_line_col();
         let state = if self.dirty { "modified" } else { "saved" };
 
-        print_str("micro | /MICRO.TXT | ");
+        print_str("pico | /PICO.TXT | ");
         print_str(state);
         print_str(" | line ");
         print_usize(line + 1);
@@ -382,6 +417,13 @@ fn decode_key(key: u8) -> Option<Event> {
         b'\t' => Some(Event::Tab),
         0x13 => Some(Event::Save),
         0x18 => Some(Event::Exit),
+        0x80 => Some(Event::Up),
+        0x81 => Some(Event::Down),
+        0x82 => Some(Event::Left),
+        0x83 => Some(Event::Right),
+        0x84 => Some(Event::Home),
+        0x85 => Some(Event::End),
+        0x86 => Some(Event::Delete),
         0x20..=0x7e => Some(Event::Char(key)),
         _ => None,
     }
