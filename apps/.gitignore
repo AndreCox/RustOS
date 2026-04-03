@@ -1,2 +1,5 @@
 *.o
 *.a
+
+# never include target folders even if they are nested in the source tree
+target/
