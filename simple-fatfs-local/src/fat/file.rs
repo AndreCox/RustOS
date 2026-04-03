@@ -8,14 +8,14 @@ use crate::{Clock, FSError, FSResult, InternalFSError};
 
 use embedded_io::*;
 
-#[derive(Debug)]
-pub(crate) struct FileProps {
-    pub(crate) entry: Properties,
+#[derive(Clone, Debug)]
+pub struct FileProps {
+    pub entry: Properties,
     /// the byte offset of the R/W pointer
     ///
     /// this can't exceed the file size, so they share the same data type
-    pub(crate) offset: FileSize,
-    pub(crate) current_cluster: ClusterIndex,
+    pub offset: FileSize,
+    pub current_cluster: ClusterIndex,
 }
 
 impl PartialOrd for FileProps {
@@ -50,7 +50,7 @@ where
     C: Clock,
 {
     pub(crate) fs: &'a FileSystem<S, C>,
-    pub(crate) props: FileProps,
+    pub props: FileProps,
 }
 
 impl<S, C> ops::Deref for ROFile<'_, S, C>
@@ -81,7 +81,7 @@ where
     S: BlockRead,
     C: Clock,
 {
-    pub(crate) fn from_props(props: FileProps, fs: &'a FileSystem<S, C>) -> Self {
+    pub fn from_props(props: FileProps, fs: &'a FileSystem<S, C>) -> Self {
         Self { fs, props }
     }
 }

@@ -25,7 +25,7 @@ RUST_SOURCES := $(shell find src -name '*.rs' 2>/dev/null)
 
 # Discover all app directories, excluding special cases
 APP_DIRS := $(wildcard apps/*/)
-APPS := $(filter-out doomgeneric,$(notdir $(patsubst %/,%,$(APP_DIRS))))
+APPS := $(notdir $(patsubst %/,%,$(APP_DIRS)))
 
 .PHONY: all clean run iso apps
 
@@ -49,6 +49,10 @@ apps: $(DISK_IMG)
 			echo "Warning: Binary not found for $(app), skipping..."; \
 		fi && \
 	) true
+	@if [ -f "assets/data/DOOM.WAD" ]; then \
+		echo "Copying DOOM.WAD to disk..."; \
+		mcopy -D o -i $(DISK_IMG) assets/data/DOOM.WAD ::/; \
+	fi
 
 # 1. Build the Rust kernel
 $(KERNEL): $(RUST_SOURCES) Cargo.toml Cargo.lock x86_64-kernel.json

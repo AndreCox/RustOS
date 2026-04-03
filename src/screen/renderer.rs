@@ -16,6 +16,18 @@ pub fn init(writer: FramebufferWriter<'static>) {
     *WRITER.lock() = Some(writer);
 }
 
+pub fn with_writer<F, R>(f: F) -> R
+where
+    F: FnOnce(&mut FramebufferWriter) -> R,
+{
+    let mut writer_lock = WRITER.lock();
+    if let Some(ref mut writer) = *writer_lock {
+        f(writer)
+    } else {
+        panic!("Framebuffer writer not initialized");
+    }
+}
+
 pub struct FramebufferWriter<'a> {
     // Hardware framebuffer (VRAM)
     pub hardware_fb: &'a mut [u8],
@@ -170,11 +182,53 @@ impl<'a> FramebufferWriter<'a> {
         self.mark_dirty(y, font_h);
     }
 
-    pub fn clear_screen(&mut self) {
+    pub fn clear(&mut self) {
         self.buffer.fill(0);
         self.cursor_x = 0;
         self.cursor_y = HEADER_HEIGHT;
-        self.mark_dirty(0, self.height);
+        self.needs_hw_update.store(true, Ordering::Relaxed);
+        self.dirty_min_y = 0;
+        self.dirty_max_y = self.height as usize;
+    }
+
+    pub fn blit_buffer(&mut self, src_ptr: *const u32, src_width: u32, src_height: u32) {
+        // Simple 2x scaling if src is 320x200 and dest is 640x400+
+        let scale = if src_width == 320 && src_height == 200 && self.width >= 640 && self.height >= 400 {
+            2
+        } else {
+            1
+        };
+
+        let fb_u32 = self.buffer.as_mut_ptr() as *mut u32;
+        let pitch_u32 = (self.pitch / 4) as usize;
+
+        // Ensure we don't overflow the source or destination
+        let max_src_y = src_height as usize;
+        let max_src_x = src_width as usize;
+
+        for y in 0..max_src_y {
+            for x in 0..max_src_x {
+                let color = unsafe { *src_ptr.add(y * max_src_x + x) };
+                
+                // Draw into backbuffer with scaling
+                for sy in 0..scale {
+                    for sx in 0..scale {
+                        let dest_x = (x * scale + sx);
+                        let dest_y = (y * scale + sy);
+                        if dest_x < self.width as usize && dest_y < self.height as usize {
+                            unsafe {
+                                *fb_u32.add(dest_y * pitch_u32 + dest_x) = color;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Mark the whole screen as dirty and request update
+        self.dirty_min_y = 0;
+        self.dirty_max_y = self.height as usize;
+        self.needs_hw_update.store(true, Ordering::Relaxed);
     }
 
     pub fn draw_string_at(&mut self, s: &str, x: u64, y: u64, color: u32) {
@@ -263,7 +317,7 @@ impl<'a> FramebufferWriter<'a> {
         match c {
             'J' => {
                 // Clear screen
-                self.clear_screen();
+                self.clear();
             }
             'H' => {
                 // Set cursor position: \x1B[<line>;<col>H
@@ -355,7 +409,7 @@ impl<'a> FramebufferWriter<'a> {
 
         // 2. Safety check: ensure we aren't jumping out of the buffer
         if src_start >= self.buffer.len() {
-            self.clear_screen(); // Fallback if math fails
+            self.clear(); // Fallback if math fails
             self.cursor_y = HEADER_HEIGHT;
             return;
         }

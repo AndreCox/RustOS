@@ -1,14 +1,11 @@
-#include <stdio.h>
-
 #include "m_argv.h"
-
 #include "doomgeneric.h"
 
 pixel_t* DG_ScreenBuffer = NULL;
 
 void M_FindResponseFile(void);
 void D_DoomMain (void);
-
+extern void DG_Init(void);
 
 void doomgeneric_Create(int argc, char **argv)
 {
@@ -18,7 +15,9 @@ void doomgeneric_Create(int argc, char **argv)
 
 	M_FindResponseFile();
 
-	DG_ScreenBuffer = malloc(DOOMGENERIC_RESX * DOOMGENERIC_RESY * 4);
+	// DG_ScreenBuffer is set by the Rust wrapper before calling doomgeneric_Create
+	// or we can set it here if we know the address. 
+	// But the Rust wrapper already sets it.
 
 	DG_Init();
 

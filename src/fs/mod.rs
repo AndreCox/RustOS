@@ -6,11 +6,13 @@ use lazy_static::lazy_static;
 use spin::Mutex;
 use x86_64::instructions::interrupts;
 // Import DefaultClock as indicated by the compiler
-use simple_fatfs::{DefaultClock, FSOptions, FileSystem};
+use simple_fatfs::{DefaultClock, FSOptions, FileSystem, ROFile, FileProps};
+use alloc::vec::Vec;
 
 lazy_static! {
     // Change () to DefaultClock
     pub static ref FILESYSTEM: Mutex<Option<FileSystem<AtaIoWrapper, DefaultClock>>> = Mutex::new(None);
+    pub static ref OPEN_FILES: Mutex<Vec<Option<FileProps>>> = Mutex::new(Vec::new());
 }
 
 pub fn with_filesystem<R>(

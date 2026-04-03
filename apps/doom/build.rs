@@ -67,7 +67,6 @@ fn main() {
         "w_file.c",
         "w_file_stdc.c",
         "w_main.c",
-        "w_merge.c",
         "w_wad.c",
         "wi_stuff.c",
         "z_zone.c",
@@ -79,13 +78,23 @@ fn main() {
         "d_mode.c",
         "d_net.c",
         "dummy.c",
+        "am_map.c",
+        "i_endoom.c",
+        "i_joystick.c",
+        "statdump.c",
     ];
 
     let mut builder = cc::Build::new();
     builder
         .no_default_flags(false)
         .include(".")
-        .include("include/");
+        .include("include/")
+        .flag("-std=gnu89")
+        .flag("-ffreestanding")
+        .flag("-fPIC")
+        .flag("-include")
+        .flag("freestanding_fix.h")
+        .define("DOOMGENERIC_EXTERNAL_FRAMEBUFFER", None);
 
     for file in &c_files {
         builder.file(file);

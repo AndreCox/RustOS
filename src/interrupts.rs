@@ -64,6 +64,109 @@ unsafe fn sys_fs_read(path_ptr: u64, buf_ptr: u64, len: u64) -> u64 {
     }
 }
 
+unsafe fn sys_fs_open(path_ptr: u64) -> u64 {
+    let path = match user_cstr_to_string(path_ptr, MAX_SYSCALL_PATH) {
+        Some(p) => p,
+        None => return SYSCALL_ERR,
+    };
+
+    let mut fs_lock = crate::fs::FILESYSTEM.lock();
+    let fs = match fs_lock.as_mut() {
+        Some(fs) => fs,
+        None => return SYSCALL_ERR,
+    };
+
+    let file = match fs.get_ro_file(path.as_str()) {
+        Ok(f) => f,
+        Err(_) => return SYSCALL_ERR,
+    };
+
+    let mut open_files = crate::fs::OPEN_FILES.lock();
+    for (i, slot) in open_files.iter_mut().enumerate() {
+        if slot.is_none() {
+            *slot = Some(file.props.clone());
+            return i as u64;
+        }
+    }
+    open_files.push(Some(file.props.clone()));
+    (open_files.len() - 1) as u64
+}
+
+unsafe fn sys_fs_read_handle(handle: u64, buf_ptr: u64, len: u64) -> u64 {
+    let mut props = {
+        let open_files = crate::fs::OPEN_FILES.lock();
+        match open_files.get(handle as usize) {
+            Some(Some(p)) => p.clone(),
+            _ => return SYSCALL_ERR,
+        }
+    };
+
+    let mut fs_lock = crate::fs::FILESYSTEM.lock();
+    let fs = match fs_lock.as_mut() {
+        Some(fs) => fs,
+        None => return SYSCALL_ERR,
+    };
+
+    let mut file = simple_fatfs::ROFile::from_props(props, fs);
+    let out = core::slice::from_raw_parts_mut(buf_ptr as *mut u8, len as usize);
+    let bytes_read = match embedded_io::Read::read(&mut file, out) {
+        Ok(n) => n as u64,
+        Err(_) => return SYSCALL_ERR,
+    };
+
+    // Update props in the global list
+    let mut open_files = crate::fs::OPEN_FILES.lock();
+    if let Some(slot) = open_files.get_mut(handle as usize) {
+        *slot = Some(file.props.clone());
+    }
+
+    bytes_read
+}
+
+unsafe fn sys_fs_seek_handle(handle: u64, offset: u64, whence: u64) -> u64 {
+    let mut props = {
+        let open_files = crate::fs::OPEN_FILES.lock();
+        match open_files.get(handle as usize) {
+            Some(Some(p)) => p.clone(),
+            _ => return SYSCALL_ERR,
+        }
+    };
+
+    let mut fs_lock = crate::fs::FILESYSTEM.lock();
+    let fs = match fs_lock.as_mut() {
+        Some(fs) => fs,
+        None => return SYSCALL_ERR,
+    };
+
+    let mut file = simple_fatfs::ROFile::from_props(props, fs);
+    let seek_from = match whence {
+        0 => embedded_io::SeekFrom::Start(offset),
+        1 => embedded_io::SeekFrom::Current(offset as i64),
+        2 => embedded_io::SeekFrom::End(offset as i64),
+        _ => return SYSCALL_ERR,
+    };
+
+    let new_pos = match embedded_io::Seek::seek(&mut file, seek_from) {
+        Ok(n) => n,
+        Err(_) => return SYSCALL_ERR,
+    };
+
+    // Update props in the global list
+    let mut open_files = crate::fs::OPEN_FILES.lock();
+    if let Some(slot) = open_files.get_mut(handle as usize) {
+        *slot = Some(file.props.clone());
+    }
+
+    new_pos
+}
+
+unsafe fn sys_fs_close(handle: u64) {
+    let mut open_files = crate::fs::OPEN_FILES.lock();
+    if let Some(slot) = open_files.get_mut(handle as usize) {
+        *slot = None;
+    }
+}
+
 unsafe fn sys_fs_write(path_ptr: u64, buf_ptr: u64, len: u64) -> u64 {
     if buf_ptr == 0 || len == 0 {
         return 0;
@@ -479,7 +582,7 @@ pub extern "C" fn syscall_handler(frame: &mut InterruptStackFrame) -> u64 {
             }
         }
         3 => {
-            // sys_clear_screen()
+            // sys_clear()
             let q = &crate::io::log_buffer::DISPLAY_QUEUE;
             q.push_char(0x1B);
             q.push_char(b'[');
@@ -528,6 +631,35 @@ pub extern "C" fn syscall_handler(frame: &mut InterruptStackFrame) -> u64 {
             if let Some(sched) = guard.as_mut() {
                 return sched.schedule(frame as *const _ as u64);
             }
+        }
+        10 => {
+            // sys_draw_buffer(ptr, width, height)
+            let ptr = arg1 as *const u32;
+            let width = (arg2 & 0xFFFFFFFF) as u32;
+            let height = ((arg2 >> 32) & 0xFFFFFFFF) as u32;
+            crate::screen::renderer::with_writer(|writer| {
+                writer.blit_buffer(ptr, width, height);
+            });
+        }
+        11 => {
+            // sys_get_uptime() -> returns uptime in ms
+            frame.rax = crate::timer::get_uptime_ms();
+        }
+        12 => {
+            // sys_fs_open(path_ptr) -> handle
+            frame.rax = unsafe { sys_fs_open(arg1) };
+        }
+        13 => {
+            // sys_fs_read_handle(handle, buf_ptr, len) -> bytes_read
+            frame.rax = unsafe { sys_fs_read_handle(arg1, arg2, arg3) };
+        }
+        14 => {
+            // sys_fs_seek_handle(handle, offset, whence) -> new_pos
+            frame.rax = unsafe { sys_fs_seek_handle(arg1, arg2, arg3) };
+        }
+        15 => {
+            // sys_fs_close(handle)
+            unsafe { sys_fs_close(arg1) };
         }
         _ => {
             serial_println!("Unknown syscall: {}", syscall_nr);

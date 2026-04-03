@@ -20,7 +20,7 @@ pub fn compositor_task() -> ! {
                 if !is_exclusive {
                     // 0. If we just exited exclusive mode, clear the screen
                     if was_exclusive {
-                        writer.clear_screen();
+                        writer.clear();
                         was_exclusive = false;
                     }
 
