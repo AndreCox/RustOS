@@ -274,7 +274,7 @@ fn load_program_image(bytes: &[u8]) -> Result<(Vec<u8>, u64), &'static str> {
     Ok((bytes.to_vec(), 0))
 }
 
-pub fn launch_program(filename: &str) -> Result<u64, &'static str> {
+pub fn launch_program(filename: &str, arg: Option<&str>) -> Result<u64, &'static str> {
     crate::serial_println!("launch_program: starting for {}", filename);
 
     let file_content = fs::with_filesystem(|fs_slot| -> Result<Vec<u8>, &'static str> {
@@ -372,6 +372,14 @@ pub fn launch_program(filename: &str) -> Result<u64, &'static str> {
     let entry_point = memory_slice.as_ptr() as u64 + entry_offset;
     crate::serial_println!("launch_program: allocated memory at {:#x}", entry_point);
 
+    let arg_ptr = if let Some(a) = arg {
+        let mut s = crate::alloc::format!("{}\0", a);
+        let leaked = s.leak();
+        leaked.as_ptr() as u64
+    } else {
+        0
+    };
+
     // Generate a task ID (just a hacky static counter for now)
     static mut NEXT_TASK_ID: u64 = 100;
     let task_id = unsafe {
@@ -380,7 +388,7 @@ pub fn launch_program(filename: &str) -> Result<u64, &'static str> {
         id
     };
 
-    let new_task = Task::new(task_id, entry_point);
+    let new_task = Task::new(task_id, entry_point, arg_ptr);
     crate::serial_println!("launch_program: created task");
 
     crate::multitasker::scheduler::with_scheduler(|scheduler_slot| {

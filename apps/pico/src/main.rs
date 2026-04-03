@@ -8,7 +8,8 @@ fn panic(_info: &core::panic::PanicInfo) -> ! {
     loop {}
 }
 
-const FILE_PATH: &[u8] = b"/PICO.TXT\0";
+// No longer a single static constant for the file path
+// // Filename is now dynamic, passed via _start or defaulting to /PICO.TXT
 const MAX_BUFFER: usize = 32768;
 const VIEW_LINES: usize = 28;
 
@@ -47,6 +48,11 @@ struct Editor {
     exit_requested: bool,
     status: [u8; 96],
     status_len: usize,
+    filename: [u8; 64],
+    filename_len: usize,
+    is_prompting: bool,
+    prompt_buf: [u8; 64],
+    prompt_len: usize,
 }
 
 impl Editor {
@@ -59,7 +65,27 @@ impl Editor {
             exit_requested: false,
             status: [0; 96],
             status_len: 0,
+            filename: [0; 64],
+            filename_len: 0,
+            is_prompting: false,
+            prompt_buf: [0; 64],
+            prompt_len: 0,
         }
+    }
+
+    fn set_filename(&mut self, path: *const u8) {
+        if path.is_null() {
+            return;
+        }
+        let mut i = 0;
+        unsafe {
+            while *path.add(i) != 0 && i < 63 {
+                self.filename[i] = *path.add(i);
+                i += 1;
+            }
+        }
+        self.filename[i] = 0;
+        self.filename_len = i;
     }
 
     fn set_status(&mut self, msg: &str) {
@@ -86,7 +112,7 @@ impl Editor {
 
     fn load_file(&mut self) {
         let read = syscall_fs_read(
-            FILE_PATH.as_ptr(),
+            self.filename.as_ptr(),
             self.buffer.as_mut_ptr(),
             MAX_BUFFER as u64,
         );
@@ -94,23 +120,29 @@ impl Editor {
             self.len = 0;
             self.cursor = 0;
             self.dirty = false;
-            self.set_status("New file: /PICO.TXT");
+            self.set_status("New file");
             return;
         }
 
         self.len = min(read as usize, MAX_BUFFER);
         self.cursor = 0;
         self.dirty = false;
-        self.set_status("Loaded /PICO.TXT");
+        self.cursor = 0;
+        self.dirty = false;
+        self.set_status("Loaded file");
     }
 
     fn save_file(&mut self) {
-        let written = syscall_fs_write(FILE_PATH.as_ptr(), self.buffer.as_ptr(), self.len as u64);
+        let written = syscall_fs_write(
+            self.filename.as_ptr(),
+            self.buffer.as_ptr(),
+            self.len as u64,
+        );
         if written == u64::MAX {
             self.set_status("Save failed");
         } else {
             self.dirty = false;
-            self.set_status("Saved /PICO.TXT");
+            self.set_status("Saved file");
         }
     }
 
@@ -262,6 +294,10 @@ impl Editor {
     }
 
     fn handle_event(&mut self, event: Event) -> bool {
+        if self.is_prompting {
+            return self.handle_prompt_event(event);
+        }
+
         // Reset exit_requested unless the event is Exit
         if !matches!(event, Event::Exit) {
             self.exit_requested = false;
@@ -288,6 +324,11 @@ impl Editor {
                 true
             }
             Event::Save => {
+                if self.filename_len == 0 {
+                    self.is_prompting = true;
+                    self.prompt_len = 0;
+                    return true;
+                }
                 self.save_file();
                 true
             }
@@ -332,6 +373,50 @@ impl Editor {
         }
     }
 
+    fn handle_prompt_event(&mut self, event: Event) -> bool {
+        match event {
+            Event::Char(byte) => {
+                if self.prompt_len < 63 {
+                    self.prompt_buf[self.prompt_len] = byte;
+                    self.prompt_len += 1;
+                }
+                true
+            }
+            Event::Backspace => {
+                if self.prompt_len > 0 {
+                    self.prompt_len -= 1;
+                }
+                true
+            }
+            Event::Enter => {
+                if self.prompt_len > 0 {
+                    let mut start = 0;
+                    if self.prompt_buf[0] != b'/' {
+                        self.filename[0] = b'/';
+                        start = 1;
+                    }
+                    for i in 0..self.prompt_len {
+                        self.filename[i + start] = self.prompt_buf[i];
+                    }
+                    self.filename[self.prompt_len + start] = 0;
+                    self.filename_len = self.prompt_len + start;
+                    self.is_prompting = false;
+                    self.save_file();
+                } else {
+                    self.is_prompting = false;
+                    self.set_status("Save cancelled");
+                }
+                true
+            }
+            Event::Exit => {
+                self.is_prompting = false;
+                self.set_status("Save cancelled");
+                true
+            }
+            _ => false,
+        }
+    }
+
     fn view_start_line(&self) -> usize {
         let cursor_line = self.line_number_at(self.cursor);
         cursor_line.saturating_sub(VIEW_LINES / 2)
@@ -340,25 +425,42 @@ impl Editor {
     fn render(&self) {
         syscall_clear_screen();
 
-        let (line, col) = self.cursor_line_col();
-        let state = if self.dirty { "modified" } else { "saved" };
-
-        print_str("pico | /PICO.TXT | ");
-        print_str(state);
-        print_str(" | line ");
-        print_usize(line + 1);
-        print_str(", col ");
-        print_usize(col + 1);
-        print_str(" | Ctrl-S save, Ctrl-X exit");
-        print_char(b'\n');
-
-        if self.status_len > 0 {
-            for &byte in &self.status[..self.status_len] {
+        if self.is_prompting {
+            print_str("Save As: /");
+            for &byte in &self.prompt_buf[..self.prompt_len] {
                 print_char(byte);
             }
             print_char(b'\n');
+            print_char(b'\n'); // Status line space
         } else {
+            let (line, col) = self.cursor_line_col();
+            let state = if self.dirty { "modified" } else { "saved" };
+
+            print_str("pico | ");
+            if self.filename_len > 0 {
+                for &byte in &self.filename[..self.filename_len] {
+                    print_char(byte);
+                }
+            } else {
+                print_str("[New File]");
+            }
+            print_str(" | ");
+            print_str(state);
+            print_str(" | line ");
+            print_usize(line + 1);
+            print_str(", col ");
+            print_usize(col + 1);
+            print_str(" | Ctrl-S save, Ctrl-X exit");
             print_char(b'\n');
+
+            if self.status_len > 0 {
+                for &byte in &self.status[..self.status_len] {
+                    print_char(byte);
+                }
+                print_char(b'\n');
+            } else {
+                print_char(b'\n');
+            }
         }
 
         let start_line = self.view_start_line();
@@ -378,7 +480,12 @@ impl Editor {
             line_idx += 1;
         }
 
-        syscall_set_cursor(col, 2 + line.saturating_sub(start_line));
+        if self.is_prompting {
+            syscall_set_cursor(9 + self.prompt_len, 0);
+        } else {
+            let (line, col) = self.cursor_line_col();
+            syscall_set_cursor(col, 2 + line.saturating_sub(start_line));
+        }
     }
 }
 
@@ -386,9 +493,15 @@ static mut EDITOR: Editor = Editor::new();
 
 #[unsafe(no_mangle)]
 #[unsafe(link_section = ".text.start")]
-pub extern "C" fn _start() -> ! {
+pub extern "C" fn _start(arg_ptr: u64) -> ! {
     let editor_ptr = core::ptr::addr_of_mut!(EDITOR);
     unsafe {
+        if arg_ptr != 0 {
+            (*editor_ptr).set_filename(arg_ptr as *const u8);
+        } else {
+            // No default filename anymore
+            (*editor_ptr).filename_len = 0;
+        }
         (*editor_ptr).load_file();
         (*editor_ptr).render();
     }

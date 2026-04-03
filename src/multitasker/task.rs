@@ -64,7 +64,7 @@ struct TaskContext {
 }
 
 impl Task {
-    pub fn new(id: u64, entry_point: u64) -> Self {
+    pub fn new(id: u64, entry_point: u64, arg: u64) -> Self {
         let stack_size = 1024 * 32; // 32 KB
         let layout = Layout::from_size_align(stack_size, 16).unwrap();
         let stack_base = unsafe { alloc(layout) } as u64;
@@ -80,6 +80,7 @@ impl Task {
         unsafe {
             context_ptr.write(TaskContext {
                 rbp: aligned_top,
+                rdi: arg,
 
                 instruction_pointer: entry_point,
                 code_segment: 0x28,
@@ -102,7 +103,7 @@ impl Task {
         }
     }
 
-    pub fn new_user(id: u64, entry_point: u64, user_stack_top: u64) -> Self {
+    pub fn new_user(id: u64, entry_point: u64, arg: u64, user_stack_top: u64) -> Self {
         let stack_size = 1024 * 32; // 32 KB
         let layout = Layout::from_size_align(stack_size, 16).unwrap();
         let stack_base = unsafe { alloc(layout) } as u64;
@@ -117,6 +118,7 @@ impl Task {
         unsafe {
             context_ptr.write(TaskContext {
                 rbp: aligned_top,
+                rdi: arg,
                 instruction_pointer: entry_point,
                 code_segment: 0x28,
                 cpu_flags: 0x202,

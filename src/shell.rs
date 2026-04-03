@@ -108,6 +108,7 @@ fn execute_command(cmd_line: &str, current_dir: &mut String) {
             println!("  mkdir <name> - Create a directory in the current directory");
             println!("  cd <path> - Change current directory");
             println!("  pwd       - Print current directory");
+            println!("  rm <file> - Remove a file");
             println!("  <program> - Run a .bin program");
         }
         "clear" => {
@@ -182,12 +183,29 @@ fn execute_command(cmd_line: &str, current_dir: &mut String) {
         "pwd" => {
             println!("{}", current_dir);
         }
+        "rm" => {
+            if let Some(filename) = parts.next() {
+                let full_path = resolve_path(current_dir, filename);
+                let fs_lock = fs::FILESYSTEM.lock();
+                if let Some(fs) = fs_lock.as_ref() {
+                    match fs.remove_file(full_path.as_str()) {
+                        Ok(_) => println!("File '{}' removed.", full_path),
+                        Err(e) => println!("Error removing file '{}': {:?}", full_path, e),
+                    }
+                } else {
+                    println!("Error: Filesystem not initialized.");
+                }
+            } else {
+                println!("Usage: rm <filename>");
+            }
+        }
         _ => {
             // Attempt to launch it as a program
+            let arg = parts.next().map(|a| resolve_path(current_dir, a));
             let filename = resolve_path(current_dir, cmd);
 
             println!("Attempting to launch {}...", filename.as_str());
-            match launch_program(filename.as_str()) {
+            match launch_program(filename.as_str(), arg.as_deref()) {
                 Ok(task_id) => {
                     println!("Launched {} with Task ID {}", filename.as_str(), task_id);
                 }
