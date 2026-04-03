@@ -46,6 +46,20 @@ fn print_char(c: u8) {
     }
 }
 
+fn print_str(s: &str) {
+    for &b in s.as_bytes() {
+        print_char(b);
+    }
+}
+
+struct Dummy;
+#[global_allocator]
+static ALLOCATOR: Dummy = Dummy;
+unsafe impl core::alloc::GlobalAlloc for Dummy {
+    unsafe fn alloc(&self, _layout: core::alloc::Layout) -> *mut u8 { core::ptr::null_mut() }
+    unsafe fn dealloc(&self, _ptr: *mut u8, _layout: core::alloc::Layout) {}
+}
+
 // =============================================================================
 // LIBC STUBS
 // =============================================================================
@@ -99,10 +113,17 @@ pub static mut stderr: *mut c_void = core::ptr::null_mut();
 pub static mut errno: i32 = 0;
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn fopen(path: *const c_char, _mode: *const c_char) -> *mut c_void {
-    let mut handle: u64 = u64::MAX;
-    unsafe { core::arch::asm!("int 0x80", in("rax") SYS_FS_OPEN, in("rdi") path as u64, lateout("rax") handle); }
-    if handle == u64::MAX { core::ptr::null_mut() } else { (handle + 1) as *mut c_void }
+pub unsafe extern "C" fn fopen(path: *const c_char, mode: *const c_char) -> *mut c_void {
+    unsafe {
+        print_str("[DOOM] fopen: ");
+        let mut i = 0;
+        while *path.add(i) != 0 { print_char(*path.add(i) as u8); i += 1; }
+        print_char(b'\n');
+
+        let mut handle: u64 = u64::MAX;
+        core::arch::asm!("int 0x80", in("rax") SYS_FS_OPEN, in("rdi") path as u64, lateout("rax") handle);
+        if handle == u64::MAX { core::ptr::null_mut() } else { (handle + 1) as *mut c_void }
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -160,7 +181,20 @@ pub unsafe extern "C" fn access(path: *const c_char, mode: i32) -> i32 {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn exit(_status: i32) -> ! {
-    loop { unsafe { core::arch::asm!("int 0x80", in("rax") SYS_EXIT, in("rdi") _status as u64); } }
+    unsafe {
+        print_str("[DOOM] Exit called with status: ");
+        let mut n = _status;
+        if n == 0 { print_char(b'0'); }
+        else {
+             if n < 0 { print_char(b'-'); n = -n; }
+             let mut buf = [0u8; 10];
+             let mut i = 0;
+             while n > 0 { buf[i] = (n % 10) as u8 + b'0'; n /= 10; i += 1; }
+             while i > 0 { i -= 1; print_char(buf[i]); }
+        }
+        print_char(b'\n');
+    }
+    loop { unsafe { core::arch::asm!("int 0x80", in("rax") 2u64, in("rdi") _status as u64); } }
 }
 
 #[unsafe(no_mangle)]
@@ -205,9 +239,30 @@ pub unsafe extern "C" fn atoi(s: *const i8) -> i32 {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn printf(_fmt: *const i8, _: ...) -> i32 { 0 }
+pub unsafe extern "C" fn printf(fmt: *const i8, _: ...) -> i32 {
+    unsafe {
+        let mut i = 0;
+        while *fmt.add(i) != 0 {
+            if *fmt.add(i) == b'%' as i8 {
+                i += 1;
+                if *fmt.add(i) == b's' as i8 {
+                    print_str("<arg>");
+                }
+            } else {
+                print_char(*fmt.add(i) as u8);
+            }
+            i += 1;
+        }
+    }
+    0
+}
+
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn fprintf(_s: *mut c_void, _fmt: *const i8, _: ...) -> i32 { 0 }
+pub unsafe extern "C" fn fprintf(_s: *mut c_void, fmt: *const i8, _: ...) -> i32 {
+    unsafe { printf(fmt); }
+    0
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn snprintf(s: *mut i8, n: usize, fmt: *const i8, _: ...) -> i32 {
     unsafe {
@@ -227,9 +282,19 @@ pub unsafe extern "C" fn vsnprintf(s: *mut i8, n: usize, fmt: *const i8, _ap: *m
     }
 }
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn vfprintf(_s: *mut c_void, _f: *const i8, _a: *mut c_void) -> i32 { 0 }
+pub unsafe extern "C" fn vfprintf(_s: *mut c_void, fmt: *const i8, _a: *mut c_void) -> i32 {
+    unsafe { printf(fmt); }
+    0
+}
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn puts(_s: *const i8) -> i32 { 0 }
+pub unsafe extern "C" fn puts(s: *const i8) -> i32 {
+    unsafe {
+        let mut i = 0;
+        while *s.add(i) != 0 { print_char(*s.add(i) as u8); i += 1; }
+        print_char(b'\n');
+    }
+    0
+}
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn system(_c: *const i8) -> i32 { 0 }
 
@@ -376,8 +441,12 @@ pub unsafe extern "C" fn DG_GetKey(p: *mut i32, k: *mut u8) -> i32 {
 pub extern "C" fn _start() -> ! {
     unsafe {
         DG_ScreenBuffer = core::ptr::addr_of_mut!(FRAMEBUFFER) as *mut u32;
-        let argv = ["doom\0".as_ptr() as *const i8, core::ptr::null()];
-        doomgeneric_Create(1, argv.as_ptr());
+        let argv = [
+            "doom\0".as_ptr() as *const i8,
+            "DOOM.WAD\0".as_ptr() as *const i8,
+            core::ptr::null()
+        ];
+        doomgeneric_Create(2, argv.as_ptr());
         loop { doomgeneric_Tick(); }
     }
 }
