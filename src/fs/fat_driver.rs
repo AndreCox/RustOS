@@ -23,9 +23,8 @@ impl BlockBase for AtaIoWrapper {
     }
 
     fn block_count(&self) -> u32 {
-        // For now, we'll hardcode a common size or a large enough value.
-        // Ideally, the AtaPio driver should return the disk size.
-        0x400000
+        // Disk size is 1024 MiB = 2,097,152 sectors (512 bytes each)
+        0x200000
     }
 }
 
@@ -34,9 +33,18 @@ impl BlockRead for AtaIoWrapper {
         if buf.is_empty() {
             return Ok(());
         }
-        let count = (buf.len() / 512) as usize;
 
+        if buf.len() % 512 != 0 {
+            crate::serial_println!(
+                "AtaIoWrapper: Sub-sector READ requested! len={}, block={}",
+                buf.len(),
+                block
+            );
+        }
+
+        let count = (buf.len() / 512) as usize;
         if count == 0 {
+            crate::serial_println!("AtaIoWrapper: Read error: buf too small ({})", buf.len());
             return Err(ErrorKind::Other);
         }
 
@@ -65,13 +73,35 @@ impl BlockWrite for AtaIoWrapper {
         if buf.is_empty() {
             return Ok(());
         }
-        let count = (buf.len() / 512) as u8;
+
+        if buf.len() % 512 != 0 {
+            crate::serial_println!(
+                "AtaIoWrapper: Sub-sector WRITE requested! len={}, block={}",
+                buf.len(),
+                block
+            );
+        }
+
+        let count = (buf.len() / 512) as usize;
         if count == 0 {
+            crate::serial_println!("AtaIoWrapper: Write error: buf too small ({})", buf.len());
             return Err(ErrorKind::Other);
         }
-        // Make sure your AtaPio struct in ata_driver.rs has this method!
-        // If it's missing, you'll need to implement it similar to read_sectors.
-        self.driver.write_sectors(block, count, buf);
+
+        // Handle possible overflow of u8 if simple_fatfs passes > 255 sectors
+        let mut remaining = count;
+        let mut cur_block = block;
+        let mut offset = 0;
+
+        while remaining > 0 {
+            let chunk = core::cmp::min(remaining, 255) as u8;
+            self.driver
+                .write_sectors(cur_block, chunk, &buf[offset..offset + (chunk as usize) * 512]);
+            cur_block += chunk as u32;
+            offset += (chunk as usize) * 512;
+            remaining -= chunk as usize;
+        }
+
         Ok(())
     }
 

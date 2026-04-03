@@ -37,6 +37,7 @@ struct Editor {
     len: usize,
     cursor: usize,
     dirty: bool,
+    exit_requested: bool,
     status: [u8; 96],
     status_len: usize,
 }
@@ -48,6 +49,7 @@ impl Editor {
             len: 0,
             cursor: 0,
             dirty: false,
+            exit_requested: false,
             status: [0; 96],
             status_len: 0,
         }
@@ -253,6 +255,11 @@ impl Editor {
     }
 
     fn handle_event(&mut self, event: Event) -> bool {
+        // Reset exit_requested unless the event is Exit
+        if !matches!(event, Event::Exit) {
+            self.exit_requested = false;
+        }
+
         match event {
             Event::Char(byte) => {
                 self.insert_byte(byte);
@@ -278,12 +285,14 @@ impl Editor {
                 true
             }
             Event::Exit => {
-                if self.dirty {
-                    self.set_status("Unsaved changes, press Ctrl-S first");
-                    return false;
+                if self.dirty && !self.exit_requested {
+                    self.exit_requested = true;
+                    self.set_status("Unsaved changes! Press Ctrl-X again to force exit");
+                    return true; // Redraw to show the new status
                 }
                 syscall_clear_screen();
                 syscall_exit();
+                true
             }
         }
     }
@@ -333,6 +342,8 @@ impl Editor {
             print_char(b'\n');
             line_idx += 1;
         }
+
+        syscall_set_cursor(col, 2 + line.saturating_sub(start_line));
     }
 }
 
@@ -382,6 +393,18 @@ fn print_char(byte: u8) {
             "int 0x80",
             in("rax") SYS_PRINT_CHAR,
             in("rdi") byte as u64,
+            options(nostack, preserves_flags)
+        );
+    }
+}
+
+fn syscall_set_cursor(x: usize, y: usize) {
+    let arg1 = (x & 0xFFFF) | ((y & 0xFFFF) << 16);
+    unsafe {
+        core::arch::asm!(
+            "int 0x80",
+            in("rax") SYS_SET_CURSOR,
+            in("rdi") arg1 as u64,
             options(nostack, preserves_flags)
         );
     }

@@ -83,20 +83,92 @@ unsafe fn sys_fs_write(path_ptr: u64, buf_ptr: u64, len: u64) -> u64 {
         None => return SYSCALL_ERR,
     };
 
-    let _ = fs.remove_file(path.as_str());
+    // If the file already exists, open it for read-write, overwrite, and
+    // truncate.  This avoids a u32 underflow bug in simple_fatfs that only
+    // triggers when file_size == 0 (brand-new files).
+    if fs.get_ro_file(path.as_str()).is_ok() {
+        crate::serial_println!("sys_fs_write: File exists, opening rw...");
+        let mut file = match fs.get_rw_file(path.as_str()) {
+            Ok(f) => f,
+            Err(e) => {
+                crate::serial_println!("sys_fs_write: Failed to get_rw_file: {:?}", e);
+                return SYSCALL_ERR;
+            }
+        };
 
-    let mut file = match fs.create_file(path.as_str()) {
+        crate::serial_println!("sys_fs_write: Seeking to start...");
+        if embedded_io::Seek::seek(&mut file, embedded_io::SeekFrom::Start(0)).is_err() {
+            crate::serial_println!("sys_fs_write: Seek failed");
+            return SYSCALL_ERR;
+        }
+
+        crate::serial_println!("sys_fs_write: Writing {} bytes...", input.len());
+        let n = match embedded_io::Write::write(&mut file, input) {
+            Ok(n) => n,
+            Err(e) => {
+                crate::serial_println!("sys_fs_write: Write failed: {:?}", e);
+                return SYSCALL_ERR;
+            }
+        };
+
+        crate::serial_println!("sys_fs_write: Truncating...");
+        if file.truncate().is_err() {
+             crate::serial_println!("sys_fs_write: Truncate failed");
+             // don't fail, just continue
+        }
+        let _ = embedded_io::Write::flush(&mut file);
+
+        drop(file);
+        crate::serial_println!("sys_fs_write: Success, wrote {}", n);
+        let _ = fs.unmount();
+        return n as u64;
+    }
+
+    // File doesn't exist.  We must create it, but simple_fatfs has a u32
+    // underflow bug when writing small data to a file with file_size == 0.
+    //
+    // Workaround: delete-if-exists, create, write the real data padded to
+    // cluster_size + 1 bytes (so the seek arithmetic works), close the
+    // handle, then re-open and overwrite+truncate using the existing-file
+    // path above (which is safe because file_size > 0).
+    {
+        let mut file = match fs.create_file(path.as_str()) {
+            Ok(f) => f,
+            Err(_) => return SYSCALL_ERR,
+        };
+
+        // Initial write: cluster_size + 1 zeros to establish file_size > cluster_size.
+        // This avoids the underflow because (cluster_size+1) > cluster_size makes
+        // clusters_to_allocate = 1, which is valid.
+        let init_buf = alloc::vec![0u8; 4097];
+        if embedded_io::Write::write(&mut file, &init_buf).is_err() {
+            return SYSCALL_ERR;
+        }
+        let _ = embedded_io::Write::flush(&mut file);
+        // file is dropped here, syncing the directory entry with file_size = 4097
+    }
+
+    // Now re-open the file (file_size > 0) and overwrite with real data.
+    let mut file = match fs.get_rw_file(path.as_str()) {
         Ok(f) => f,
         Err(_) => return SYSCALL_ERR,
     };
 
-    match embedded_io::Write::write(&mut file, input) {
-        Ok(n) => {
-            let _ = embedded_io::Write::flush(&mut file);
-            n as u64
-        }
-        Err(_) => SYSCALL_ERR,
+    if embedded_io::Seek::seek(&mut file, embedded_io::SeekFrom::Start(0)).is_err() {
+        return SYSCALL_ERR;
     }
+
+    let n = match embedded_io::Write::write(&mut file, input) {
+        Ok(n) => n,
+        Err(_) => return SYSCALL_ERR,
+    };
+
+    let _ = file.truncate();
+    let _ = embedded_io::Write::flush(&mut file);
+
+    drop(file);
+    let _ = fs.unmount();
+    n as u64
 }
 
 // Define the Interrupt Descriptor Table (IDT) structures
@@ -388,10 +460,6 @@ pub extern "C" fn syscall_handler(frame: &mut InterruptStackFrame) -> u64 {
     let arg1 = frame.rdi;
     let arg2 = frame.rsi;
     let arg3 = frame.rdx;
-
-    if syscall_nr != 1 {
-        crate::serial_println!("Syscall: nr={}, task={}", syscall_nr, frame.rax);
-    }
 
     match syscall_nr {
         1 => {

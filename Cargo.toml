@@ -18,7 +18,7 @@ limine = "0.5.0"
 linked_list_allocator = "0.10.5"
 spin = "0.10.0"
 x86_64 = { version = "0.15", features = ["instructions"] }
-simple-fatfs = { git = "https://github.com/Oakchris1955/simple-fatfs.git", default-features = false }
+simple-fatfs = { path = "simple-fatfs-local", default-features = false }
 embedded-io = {version = "0.6.1", default-features = false}
 
 [profile.dev]
