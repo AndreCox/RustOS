@@ -1,0 +1,32 @@
+# removed feature
+5a218bdbe29ad911aabdedd0587886ea2b802a42
+
+# fix commit for `no-std` contexts
+4941c8ce703892a86a67d9b79098f7620cc872a9
+
+# reverted commit
+ef8089a2086fd04208b793b0fe0e74bf3c0487a4
+
+# style change
+4552d6ff38cd53a01a13f9f9e7238d4265192a0c
+
+# documentation-related
+87d21e205b5090f0ac81158cf62fe3bf69e59910
+
+# reverted commit
+a98ce8999c079f23c6687bd46706229311659e56
+
+# remove Cargo.toml from workspace
+3ab8735c80d6b1304afb7f09b74289fd0818bf8e
+
+# create README
+9c49238f25ec6c97f79fa2dd7816691514b6eec7
+
+# create CHANGELOG and git-cliff config file
+ceabaf891782f99cb935748f8f7bcc18627b872d
+
+# upload FAT .img files
+69bb0a8e3c34891401f1c746ca44fb902a7b0997
+
+# update .gitignore
+21c7d6ba6e1336239efb875f9f157cd98f2066c6

@@ -1,0 +1,55 @@
+[package]
+name = "simple-fatfs"
+version = "0.1.0-alpha.2"
+edition = "2021"
+description = "A simple-to-use FAT filesystem library for Rust (mainly targeted at embedded systems)"
+license = "MIT"
+repository = "https://github.com/Oakchris1955/simple-fatfs"
+exclude = ["/.github", ".vscode", "/imgs", "**/*cliff*", "/tests"]
+
+[dependencies]
+bitfield-struct = "0.8.0"
+bitflags = "2.11.0"
+embedded-io = { version = "0.6.1" }
+embedded-storage = { version = "0.3.1", optional = true }
+log = "0.4.22"
+oem_cp = "2.1.0"
+time = { version = "0.3.47", default-features = false, features = [ "parsing", "macros" ]}
+typed-path = { version = "0.12.0", default-features = false }
+siphasher = { version = "1.0.1", default-features = false , optional = true }
+zerocopy = { version = "0.8.27", features = ["derive"] }
+
+[features]
+default = ["std"]
+std = ["time/std", "time/local-offset", "embedded-io/std"]
+# bloom filter support (may be redundant on some targets)
+bloom = ["dep:siphasher"]
+# 64-bit logical block addressing
+lba64 = []
+# embedded-storage block IO translators
+embedded_storage_translator = ["dep:embedded-storage"]
+codepage = []
+cp720 = []
+cp737 = []
+cp775 = []
+cp850 = []
+cp852 = []
+cp855 = []
+cp857 = []
+cp858 = []
+cp860 = []
+cp861 = []
+cp862 = []
+cp863 = []
+cp864 = []
+cp865 = []
+cp866 = []
+cp869 = []
+cp874 = []
+
+[dev-dependencies]
+akin = "0.4.0"
+embedded-io-adapters = { version = "0.6.2", features = ["std"] }
+rand = { version = "0.9.2", default-features = false, features = ["thread_rng"] }
+regex = "1.11.2"
+test-log = "0.2.16"
