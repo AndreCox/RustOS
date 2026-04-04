@@ -1,7 +1,7 @@
 use crate::alloc::string::String;
 use crate::alloc::vec::Vec;
 use crate::fs;
-use crate::io::keyboard::{SCANCODE_QUEUE, scancode_to_char};
+use crate::io::keyboard::{SCANCODE_QUEUE, SHELL_TASK_ID, focused_task, scancode_to_char};
 use crate::multitasker::yield_now;
 use crate::print;
 use crate::println;
@@ -18,6 +18,11 @@ pub fn task_shell() -> ! {
     print_prompt(&current_dir);
 
     loop {
+        if focused_task() != SHELL_TASK_ID {
+            yield_now();
+            continue;
+        }
+
         // Handle input from the keyboard queue
         while let Some(scancode) = SCANCODE_QUEUE.pop() {
             if let Some(character) = scancode_to_char(scancode) {

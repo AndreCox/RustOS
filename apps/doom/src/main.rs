@@ -51,6 +51,9 @@ const SYS_FS_OPEN: u64 = 12;
 const SYS_FS_READ_HANDLE: u64 = 13;
 const SYS_FS_SEEK_HANDLE: u64 = 14;
 const SYS_FS_CLOSE: u64 = 15;
+const SYS_ENTER_EXCLUSIVE_GRAPHICS: u64 = 16;
+const SYS_EXIT_EXCLUSIVE_GRAPHICS: u64 = 17;
+const SYS_GET_SCANCODE: u64 = 7;
 const SYS_GET_KEY: u64 = 9;
 const SYS_EXIT: u64 = 2;
 
@@ -1145,6 +1148,96 @@ pub unsafe extern "C" fn memmove(d: *mut u8, s: *const u8, n: usize) -> *mut u8 
 #[unsafe(no_mangle)]
 pub extern "C" fn DG_Init() {}
 
+static mut HAVE_E0_PREFIX: bool = false;
+
+fn scancode_to_doom_key(scancode: u8, extended: bool) -> Option<u8> {
+    Some(match (extended, scancode) {
+        (_, 0x01) => 27,
+        (_, 0x02) => b'1',
+        (_, 0x03) => b'2',
+        (_, 0x04) => b'3',
+        (_, 0x05) => b'4',
+        (_, 0x06) => b'5',
+        (_, 0x07) => b'6',
+        (_, 0x08) => b'7',
+        (_, 0x09) => b'8',
+        (_, 0x0A) => b'9',
+        (_, 0x0B) => b'0',
+        (_, 0x0C) => b'-',
+        (_, 0x0D) => b'=',
+        (_, 0x0E) => 0x7f,
+        (_, 0x0F) => b'\t',
+        (_, 0x10) => b'q',
+        (_, 0x11) => b'w',
+        (_, 0x12) => b'e',
+        (_, 0x13) => b'r',
+        (_, 0x14) => b't',
+        (_, 0x15) => b'y',
+        (_, 0x16) => b'u',
+        (_, 0x17) => b'i',
+        (_, 0x18) => b'o',
+        (_, 0x19) => b'p',
+        (_, 0x1A) => b'[',
+        (_, 0x1B) => b']',
+        (_, 0x1C) => 13,
+        (false, 0x1D) | (true, 0x1D) => 0xa3,
+        (_, 0x1E) => b'a',
+        (_, 0x1F) => b's',
+        (_, 0x20) => b'd',
+        (_, 0x21) => b'f',
+        (_, 0x22) => b'g',
+        (_, 0x23) => b'h',
+        (_, 0x24) => b'j',
+        (_, 0x25) => b'k',
+        (_, 0x26) => b'l',
+        (_, 0x27) => b';',
+        (_, 0x28) => b'\'',
+        (_, 0x29) => b'`',
+        (_, 0x2A) | (_, 0x36) => 0xb6,
+        (_, 0x2B) => b'\\',
+        (_, 0x2C) => b'z',
+        (_, 0x2D) => b'x',
+        (_, 0x2E) => b'c',
+        (_, 0x2F) => b'v',
+        (_, 0x30) => b'b',
+        (_, 0x31) => b'n',
+        (_, 0x32) => b'm',
+        (_, 0x33) => b',',
+        (_, 0x34) => b'.',
+        (_, 0x35) => b'/',
+        (_, 0x37) => b'*',
+        (_, 0x38) => 0xb8,
+        (_, 0x39) => 0xa2,
+        (_, 0x3A) => 0xba,
+        (_, 0x3B) => 0xbb,
+        (_, 0x3C) => 0xbc,
+        (_, 0x3D) => 0xbd,
+        (_, 0x3E) => 0xbe,
+        (_, 0x3F) => 0xbf,
+        (_, 0x40) => 0xc0,
+        (_, 0x41) => 0xc1,
+        (_, 0x42) => 0xc2,
+        (_, 0x43) => 0xc3,
+        (_, 0x44) => 0xc4,
+        (_, 0x45) => 0xc5,
+        (_, 0x47) => 0xc7,
+        (_, 0x48) => 0xad,
+        (_, 0x49) => 0xc9,
+        (_, 0x4A) => b'-',
+        (_, 0x4B) => 0xac,
+        (_, 0x4D) => 0xae,
+        (_, 0x4E) => b'+',
+        (_, 0x4F) => 0xcf,
+        (_, 0x50) => 0xaf,
+        (_, 0x51) => 0xd1,
+        (_, 0x52) => 0xd2,
+        (_, 0x53) => 0xd3,
+        (_, 0x57) => 0xd7,
+        (_, 0x58) => 0xd8,
+        _ => return None,
+    })
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DG_DrawFrame() {
     unsafe {
@@ -1177,14 +1270,30 @@ pub extern "C" fn DG_GetTicksMs() -> u32 {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DG_GetKey(p: *mut i32, k: *mut u8) -> i32 {
     unsafe {
-        let mut v: u64 = 0;
-        core::arch::asm!("int 0x80", in("rax") SYS_GET_KEY, lateout("rax") v);
-        if v == 0 {
-            0
-        } else {
-            *p = 1;
-            *k = v as u8;
-            1
+        loop {
+            let mut v: u64 = 0;
+            core::arch::asm!("int 0x80", in("rax") SYS_GET_SCANCODE, lateout("rax") v);
+            let raw = v as u8;
+
+            if raw == 0 {
+                return 0;
+            }
+
+            if raw == 0xE0 {
+                HAVE_E0_PREFIX = true;
+                continue;
+            }
+
+            let released = (raw & 0x80) != 0;
+            let scancode = raw & 0x7F;
+            let extended = HAVE_E0_PREFIX;
+            HAVE_E0_PREFIX = false;
+
+            if let Some(doom_key) = scancode_to_doom_key(scancode, extended) {
+                *p = if released { 0 } else { 1 };
+                *k = doom_key;
+                return 1;
+            }
         }
     }
 }
@@ -1203,6 +1312,7 @@ pub extern "C" fn DG_EndFrame() {}
 #[unsafe(no_mangle)]
 pub extern "C" fn _start() -> ! {
     unsafe {
+        core::arch::asm!("int 0x80", in("rax") SYS_ENTER_EXCLUSIVE_GRAPHICS);
         DG_ScreenBuffer = core::ptr::addr_of_mut!(FRAMEBUFFER) as *mut u32;
         let argv = [
             "doom\0".as_ptr() as *const i8,
@@ -1218,5 +1328,8 @@ pub extern "C" fn _start() -> ! {
 
 #[panic_handler]
 fn panic(_info: &core::panic::PanicInfo) -> ! {
+    unsafe {
+        core::arch::asm!("int 0x80", in("rax") SYS_EXIT_EXCLUSIVE_GRAPHICS);
+    }
     loop {}
 }

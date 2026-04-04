@@ -496,6 +496,12 @@ pub extern "C" fn exception_handler(frame: &InterruptStackFrame) -> u64 {
         if let Some(mut guard) = crate::multitasker::scheduler::SCHEDULER.try_lock() {
             if let Some(sched) = guard.as_mut() {
                 if let Some(task) = sched.current_task.as_mut() {
+                    if crate::io::keyboard::task_has_focus(task.id) {
+                        crate::io::keyboard::set_focus_and_clear(crate::io::keyboard::SHELL_TASK_ID);
+                        crate::screen::exit_exclusive_mode();
+                        crate::screen::vfb::release_owner(task.id);
+                    }
+
                     // 1. Mark dead
                     task.status = crate::multitasker::task::TaskStatus::Killed;
 
@@ -541,7 +547,9 @@ pub extern "C" fn exception_handler(frame: &InterruptStackFrame) -> u64 {
             asm!("in al, dx", out("al") scancode, in("dx") 0x60 as u16);
         }
         if scancode != 0xE0 {
-            let _ = SCANCODE_QUEUE.push(scancode);
+            crate::io::keyboard::push_scancode(scancode);
+        } else {
+            crate::io::keyboard::push_scancode(scancode);
         }
     }
 
@@ -576,6 +584,11 @@ pub extern "C" fn syscall_handler(frame: &mut InterruptStackFrame) -> u64 {
             let mut guard = crate::multitasker::scheduler::SCHEDULER.lock();
             if let Some(sched) = guard.as_mut() {
                 if let Some(task) = sched.current_task.as_mut() {
+                    if crate::io::keyboard::task_has_focus(task.id) {
+                        crate::io::keyboard::set_focus_and_clear(crate::io::keyboard::SHELL_TASK_ID);
+                        crate::screen::exit_exclusive_mode();
+                        crate::screen::vfb::release_owner(task.id);
+                    }
                     task.status = crate::multitasker::task::TaskStatus::Exited;
                 }
                 return sched.schedule(frame as *const _ as u64);
@@ -615,15 +628,33 @@ pub extern "C" fn syscall_handler(frame: &mut InterruptStackFrame) -> u64 {
         }
         7 => {
             // sys_get_scancode() -> returns next raw scancode byte, or 0 if none
-            frame.rax = SCANCODE_QUEUE.pop().map(|s| s as u64).unwrap_or(0);
+            let focused = crate::io::keyboard::focused_task();
+            let current_task = crate::multitasker::scheduler::SCHEDULER
+                .try_lock()
+                .and_then(|guard| guard.as_ref().and_then(|sched| sched.current_task.as_ref().map(|task| task.id)));
+
+            frame.rax = if current_task == Some(focused) {
+                SCANCODE_QUEUE.pop().map(|s| s as u64).unwrap_or(0)
+            } else {
+                0
+            };
         }
         9 => {
             // sys_get_key() -> returns next translated key byte, or 0 if none
-            frame.rax = SCANCODE_QUEUE
-                .pop()
-                .and_then(|s| crate::io::keyboard::scancode_to_byte(s))
-                .map(|b| b as u64)
-                .unwrap_or(0);
+            let focused = crate::io::keyboard::focused_task();
+            let current_task = crate::multitasker::scheduler::SCHEDULER
+                .try_lock()
+                .and_then(|guard| guard.as_ref().and_then(|sched| sched.current_task.as_ref().map(|task| task.id)));
+
+            frame.rax = if current_task == Some(focused) {
+                SCANCODE_QUEUE
+                    .pop()
+                    .and_then(|s| crate::io::keyboard::scancode_to_byte(s))
+                    .map(|b| b as u64)
+                    .unwrap_or(0)
+            } else {
+                0
+            };
         }
         8 => {
             // sys_yield() -> cooperate with the scheduler
@@ -666,6 +697,14 @@ pub extern "C" fn syscall_handler(frame: &mut InterruptStackFrame) -> u64 {
         15 => {
             // sys_fs_close(handle)
             unsafe { sys_fs_close(arg1) };
+        }
+        16 => {
+            // sys_enter_exclusive_graphics()
+            crate::screen::enter_exclusive_mode();
+        }
+        17 => {
+            // sys_exit_exclusive_graphics()
+            crate::screen::exit_exclusive_mode();
         }
         _ => {
             serial_println!("Unknown syscall: {}", syscall_nr);
