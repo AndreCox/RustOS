@@ -11,7 +11,6 @@ pub const HEADER_HEIGHT: u64 = 32;
 
 // Atomic flags and request methods have been removed in favor of in-band ESC sequences.
 
-
 pub fn init(writer: FramebufferWriter<'static>) {
     *WRITER.lock() = Some(writer);
 }
@@ -347,7 +346,7 @@ impl<'a> FramebufferWriter<'a> {
                 // Standard ANSI: \x1B[<line>;<col>H is 1-indexed.
                 let visual_line = line.saturating_sub(1);
                 let visual_col = col.saturating_sub(1);
-                
+
                 let char_w = self.font.header.width as u64;
                 let char_h = self.font.header.height as u64;
                 self.set_cursor(visual_col * char_w, visual_line * char_h);
@@ -365,7 +364,7 @@ impl<'a> FramebufferWriter<'a> {
         self.cursor_x = x;
         self.cursor_y = y + HEADER_HEIGHT;
         self.old_cursor_y = self.cursor_y;
-        
+
         // Mark new line as dirty too
         self.mark_dirty(self.cursor_y, char_h);
     }

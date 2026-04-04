@@ -309,8 +309,8 @@ unsafe fn sys_fs_write(path_ptr: u64, buf_ptr: u64, len: u64) -> u64 {
 
         crate::serial_println!("sys_fs_write: Truncating...");
         if file.truncate().is_err() {
-             crate::serial_println!("sys_fs_write: Truncate failed");
-             // don't fail, just continue
+            crate::serial_println!("sys_fs_write: Truncate failed");
+            // don't fail, just continue
         }
         let _ = embedded_io::Write::flush(&mut file);
 
@@ -590,7 +590,9 @@ pub extern "C" fn exception_handler(frame: &InterruptStackFrame) -> u64 {
             if let Some(sched) = guard.as_mut() {
                 if let Some(task) = sched.current_task.as_mut() {
                     if crate::io::keyboard::task_has_focus(task.id) {
-                        crate::io::keyboard::set_focus_and_clear(crate::io::keyboard::SHELL_TASK_ID);
+                        crate::io::keyboard::set_focus_and_clear(
+                            crate::io::keyboard::SHELL_TASK_ID,
+                        );
                         crate::screen::exit_exclusive_mode();
                         crate::screen::vfb::release_owner(task.id);
                     }
@@ -678,7 +680,9 @@ pub extern "C" fn syscall_handler(frame: &mut InterruptStackFrame) -> u64 {
             if let Some(sched) = guard.as_mut() {
                 if let Some(task) = sched.current_task.as_mut() {
                     if crate::io::keyboard::task_has_focus(task.id) {
-                        crate::io::keyboard::set_focus_and_clear(crate::io::keyboard::SHELL_TASK_ID);
+                        crate::io::keyboard::set_focus_and_clear(
+                            crate::io::keyboard::SHELL_TASK_ID,
+                        );
                         crate::screen::exit_exclusive_mode();
                         crate::screen::vfb::release_owner(task.id);
                     }
@@ -699,16 +703,16 @@ pub extern "C" fn syscall_handler(frame: &mut InterruptStackFrame) -> u64 {
             let x = (arg1 & 0xFFFF);
             let y = ((arg1 >> 16) & 0xFFFF);
             let q = &crate::io::log_buffer::DISPLAY_QUEUE;
-            
+
             q.push_char(0x1B);
             q.push_char(b'[');
-            
+
             // Push y+1 (line) as digits
             push_u64_digits(q, y + 1);
             q.push_char(b';');
             // Push x+1 (col) as digits
             push_u64_digits(q, x + 1);
-            
+
             q.push_char(b'H');
         }
         5 => {
@@ -724,7 +728,11 @@ pub extern "C" fn syscall_handler(frame: &mut InterruptStackFrame) -> u64 {
             let focused = crate::io::keyboard::focused_task();
             let current_task = crate::multitasker::scheduler::SCHEDULER
                 .try_lock()
-                .and_then(|guard| guard.as_ref().and_then(|sched| sched.current_task.as_ref().map(|task| task.id)));
+                .and_then(|guard| {
+                    guard
+                        .as_ref()
+                        .and_then(|sched| sched.current_task.as_ref().map(|task| task.id))
+                });
 
             frame.rax = if current_task == Some(focused) {
                 SCANCODE_QUEUE.pop().map(|s| s as u64).unwrap_or(0)
@@ -737,7 +745,11 @@ pub extern "C" fn syscall_handler(frame: &mut InterruptStackFrame) -> u64 {
             let focused = crate::io::keyboard::focused_task();
             let current_task = crate::multitasker::scheduler::SCHEDULER
                 .try_lock()
-                .and_then(|guard| guard.as_ref().and_then(|sched| sched.current_task.as_ref().map(|task| task.id)));
+                .and_then(|guard| {
+                    guard
+                        .as_ref()
+                        .and_then(|sched| sched.current_task.as_ref().map(|task| task.id))
+                });
 
             frame.rax = if current_task == Some(focused) {
                 SCANCODE_QUEUE
