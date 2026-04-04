@@ -637,9 +637,15 @@ pub extern "C" fn syscall_handler(frame: &mut InterruptStackFrame) -> u64 {
             let ptr = arg1 as *const u32;
             let width = (arg2 & 0xFFFFFFFF) as u32;
             let height = ((arg2 >> 32) & 0xFFFFFFFF) as u32;
-            crate::screen::renderer::with_writer(|writer| {
-                writer.blit_buffer(ptr, width, height);
-            });
+            // This syscall runs in interrupt context. If another task was
+            // preempted while holding WRITER, blocking on the spinlock here
+            // deadlocks the whole system because the lock owner cannot run.
+            // It is better to drop one frame and let the next tick retry.
+            if let Some(mut writer_guard) = crate::screen::renderer::WRITER.try_lock() {
+                if let Some(writer) = writer_guard.as_mut() {
+                    writer.blit_buffer(ptr, width, height);
+                }
+            }
         }
         11 => {
             // sys_get_uptime() -> returns uptime in ms
