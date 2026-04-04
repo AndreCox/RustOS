@@ -137,9 +137,15 @@ fn execute_command(cmd_line: &str, current_dir: &mut String) {
             let fs_lock = fs::FILESYSTEM.lock();
             if let Some(fs) = fs_lock.as_ref() {
                 if let Ok(dir_iter) = fs.read_dir(current_dir.as_str()) {
+                    let mut shown_paths: Vec<String> = Vec::new();
                     for entry_result in dir_iter {
                         if let Ok(entry) = entry_result {
-                            let path = entry.path();
+                            let path = crate::alloc::format!("{}", entry.path());
+                            if shown_paths.iter().any(|p| p == &path) {
+                                continue;
+                            }
+                            shown_paths.push(path.clone());
+
                             if entry.is_dir() {
                                 println!("[DIR]  {}", path);
                             } else if entry.is_file() {

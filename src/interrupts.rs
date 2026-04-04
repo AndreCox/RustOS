@@ -67,6 +67,11 @@ fn normalize_fs_path(path: &str) -> String {
         return String::from("/");
     }
 
+    // Canonicalize: keep root as "/", but strip trailing slash for all other paths.
+    while normalized.len() > 1 && normalized.as_bytes()[normalized.len() - 1] == b'/' {
+        normalized.pop();
+    }
+
     normalized
 }
 
@@ -213,6 +218,11 @@ unsafe fn sys_fs_mkdir(path_ptr: u64) -> u64 {
         Some(fs) => fs,
         None => return SYSCALL_ERR,
     };
+
+    // Be strict-idempotent for userland callers that create the same directory often.
+    if fs.read_dir(path.as_str()).is_ok() {
+        return 0;
+    }
 
     match fs.create_dir(path.as_str()) {
         Ok(()) | Err(simple_fatfs::FSError::AlreadyExists) => 0,
