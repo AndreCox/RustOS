@@ -45,6 +45,7 @@ const fn align_up(value: usize, align: usize) -> usize {
 // =============================================================================
 
 const SYS_PRINT_CHAR: u64 = 1;
+const SYS_FS_WRITE: u64 = 6;
 const SYS_DRAW_BUFFER: u64 = 10;
 const SYS_GET_UPTIME: u64 = 11;
 const SYS_FS_OPEN: u64 = 12;
@@ -53,6 +54,9 @@ const SYS_FS_SEEK_HANDLE: u64 = 14;
 const SYS_FS_CLOSE: u64 = 15;
 const SYS_ENTER_EXCLUSIVE_GRAPHICS: u64 = 16;
 const SYS_EXIT_EXCLUSIVE_GRAPHICS: u64 = 17;
+const SYS_FS_MKDIR: u64 = 18;
+const SYS_FS_REMOVE: u64 = 19;
+const SYS_FS_RENAME: u64 = 20;
 const SYS_GET_SCANCODE: u64 = 7;
 const SYS_GET_KEY: u64 = 9;
 const SYS_EXIT: u64 = 2;
@@ -200,9 +204,137 @@ pub static mut stderr: *mut c_void = core::ptr::null_mut();
 #[unsafe(no_mangle)]
 pub static mut errno: i32 = 0;
 
+const FILE_MODE_READ: u32 = 0;
+const FILE_MODE_WRITE: u32 = 1;
+
+#[repr(C)]
+struct KernelFile {
+    mode: u32,
+    handle: u64,
+    path: *mut c_char,
+    buffer: *mut u8,
+    len: usize,
+    cap: usize,
+    pos: usize,
+}
+
+unsafe fn cstr_len(ptr: *const c_char) -> usize {
+    let mut len = 0usize;
+    while unsafe { *ptr.add(len) } != 0 {
+        len += 1;
+    }
+    len
+}
+
+unsafe fn cstr_dup(ptr: *const c_char) -> *mut c_char {
+    let len = unsafe { cstr_len(ptr) };
+    let out = unsafe { malloc(len + 1) as *mut c_char };
+    if out.is_null() {
+        return core::ptr::null_mut();
+    }
+    unsafe {
+        core::ptr::copy_nonoverlapping(ptr, out, len + 1);
+    }
+    out
+}
+
+// Kernel FS paths are most reliable with an explicit leading '/'.
+// Doom often uses relative-looking paths like ".savegame/...".
+unsafe fn normalize_kernel_path(src: *const c_char, dst: &mut [u8; 512]) -> *const c_char {
+    if src.is_null() {
+        return src;
+    }
+
+    let first = unsafe { *src as u8 };
+    if first == b'/' {
+        return src;
+    }
+
+    let mut s = src;
+    loop {
+        let c0 = unsafe { *s as u8 };
+        let c1 = unsafe { *s.add(1) as u8 };
+        if c0 == b'.' && c1 == b'/' {
+            s = unsafe { s.add(2) };
+            continue;
+        }
+        break;
+    }
+
+    dst[0] = b'/';
+    let mut i = 1usize;
+    loop {
+        if i >= dst.len() - 1 {
+            break;
+        }
+        let b = unsafe { *s as u8 };
+        dst[i] = b;
+        if b == 0 {
+            return dst.as_ptr() as *const c_char;
+        }
+        i += 1;
+        s = unsafe { s.add(1) };
+    }
+
+    dst[dst.len() - 1] = 0;
+    dst.as_ptr() as *const c_char
+}
+
+unsafe fn file_reserve(file: *mut KernelFile, needed: usize) -> bool {
+    let file = unsafe { &mut *file };
+    if needed <= file.cap {
+        return true;
+    }
+
+    let mut new_cap = if file.cap == 0 { 256 } else { file.cap };
+    while new_cap < needed {
+        new_cap = new_cap.saturating_mul(2);
+        if new_cap == 0 {
+            return false;
+        }
+    }
+
+    let new_buf = unsafe { realloc(file.buffer as *mut c_void, new_cap) as *mut u8 };
+    if new_buf.is_null() {
+        return false;
+    }
+
+    file.buffer = new_buf;
+    file.cap = new_cap;
+    true
+}
+
+unsafe fn flush_kernel_file(file: *mut KernelFile) -> i32 {
+    let file = unsafe { &mut *file };
+    if file.mode != FILE_MODE_WRITE {
+        return 0;
+    }
+
+    let mut result: u64 = u64::MAX;
+    let buf_ptr = if file.len == 0 {
+        core::ptr::null()
+    } else {
+        file.buffer as *const u8
+    };
+    unsafe {
+        core::arch::asm!(
+            "int 0x80",
+            in("rax") SYS_FS_WRITE,
+            in("rdi") file.path as u64,
+            in("rsi") buf_ptr as u64,
+            in("rdx") file.len as u64,
+            lateout("rax") result
+        );
+    }
+    if result == u64::MAX { -1 } else { 0 }
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn fopen(path: *const c_char, _mode: *const c_char) -> *mut c_void {
     unsafe {
+        let mut norm_path_buf = [0u8; 512];
+        let kernel_path = normalize_kernel_path(path, &mut norm_path_buf);
+
         print_str("[DOOM] fopen: ");
         let mut i = 0;
         while *path.add(i) != 0 {
@@ -210,14 +342,42 @@ pub unsafe extern "C" fn fopen(path: *const c_char, _mode: *const c_char) -> *mu
             i += 1;
         }
 
+        let mode = if _mode.is_null() { b'r' } else { *_mode as u8 };
+        if mode == b'w' || mode == b'a' {
+            let file_ptr = malloc(core::mem::size_of::<KernelFile>()) as *mut KernelFile;
+            if file_ptr.is_null() {
+                print_str(" -> FAILED\n");
+                return core::ptr::null_mut();
+            }
+
+            let path_copy = cstr_dup(kernel_path);
+            if path_copy.is_null() {
+                print_str(" -> FAILED\n");
+                return core::ptr::null_mut();
+            }
+
+            file_ptr.write(KernelFile {
+                mode: FILE_MODE_WRITE,
+                handle: 0,
+                path: path_copy,
+                buffer: core::ptr::null_mut(),
+                len: 0,
+                cap: 0,
+                pos: 0,
+            });
+
+            print_str(" -> SUCCESS (write)\n");
+            return file_ptr as *mut c_void;
+        }
+
         let mut handle: u64 = u64::MAX;
-        core::arch::asm!("int 0x80", in("rax") SYS_FS_OPEN, in("rdi") path as u64, lateout("rax") handle);
+        core::arch::asm!("int 0x80", in("rax") SYS_FS_OPEN, in("rdi") kernel_path as u64, lateout("rax") handle);
         if handle == u64::MAX {
             let mut fallback = [0u8; 128];
             let mut j = 0;
             let mut k = 0;
-            while *path.add(j) != 0 && k < 127 {
-                let c = *path.add(j) as u8;
+            while *kernel_path.add(j) != 0 && k < 127 {
+                let c = *kernel_path.add(j) as u8;
                 if c != b'.' && c != b'/' && c != b'\\' {
                     fallback[k] = c.to_ascii_uppercase();
                     k += 1;
@@ -232,10 +392,25 @@ pub unsafe extern "C" fn fopen(path: *const c_char, _mode: *const c_char) -> *mu
                 return core::ptr::null_mut();
             }
         }
+        let file_ptr = malloc(core::mem::size_of::<KernelFile>()) as *mut KernelFile;
+        if file_ptr.is_null() {
+            print_str(" -> FAILED\n");
+            return core::ptr::null_mut();
+        }
+        file_ptr.write(KernelFile {
+            mode: FILE_MODE_READ,
+            handle,
+            path: core::ptr::null_mut(),
+            buffer: core::ptr::null_mut(),
+            len: 0,
+            cap: 0,
+            pos: 0,
+        });
+
         print_str(" -> SUCCESS (");
         print_num((handle + 1) as i64);
         print_str(")\n");
-        (handle + 1) as *mut c_void
+        file_ptr as *mut c_void
     }
 }
 
@@ -292,7 +467,11 @@ pub unsafe extern "C" fn fread(
     if fp.is_null() {
         return 0;
     }
-    let handle = (fp as u64) - 1;
+    let file = unsafe { &mut *(fp as *mut KernelFile) };
+    if file.mode != FILE_MODE_READ {
+        return 0;
+    }
+    let handle = file.handle;
     let mut read: u64 = 0;
     unsafe {
         core::arch::asm!("int 0x80", in("rax") SYS_FS_READ_HANDLE, in("rdi") handle, in("rsi") ptr as u64, in("rdx") (size * nmemb) as u64, lateout("rax") read);
@@ -344,12 +523,38 @@ pub unsafe extern "C" fn fseek(fp: *mut c_void, offset: i64, whence: i32) -> i32
     if fp.is_null() {
         return -1;
     }
-    let handle = (fp as u64) - 1;
-    let mut res: u64 = 0;
-    unsafe {
-        core::arch::asm!("int 0x80", in("rax") SYS_FS_SEEK_HANDLE, in("rdi") handle, in("rsi") offset as u64, in("rdx") whence as u64, lateout("rax") res);
+    let file = unsafe { &mut *(fp as *mut KernelFile) };
+    if file.mode == FILE_MODE_READ {
+        let handle = file.handle;
+        let mut res: u64 = 0;
+        unsafe {
+            core::arch::asm!("int 0x80", in("rax") SYS_FS_SEEK_HANDLE, in("rdi") handle, in("rsi") offset as u64, in("rdx") whence as u64, lateout("rax") res);
+        }
+        if res == u64::MAX { -1 } else { 0 }
+    } else {
+        let base = match whence {
+            0 => 0isize,
+            1 => file.pos as isize,
+            2 => file.len as isize,
+            _ => return -1,
+        };
+        let new_pos = base.saturating_add(offset as isize);
+        if new_pos < 0 {
+            return -1;
+        }
+        let new_pos = new_pos as usize;
+        if new_pos > file.len {
+            if !unsafe { file_reserve(fp as *mut KernelFile, new_pos) } {
+                return -1;
+            }
+            unsafe {
+                core::ptr::write_bytes(file.buffer.add(file.len), 0, new_pos - file.len);
+            }
+            file.len = new_pos;
+        }
+        file.pos = new_pos;
+        0
     }
-    if res == u64::MAX { -1 } else { 0 }
 }
 
 #[unsafe(no_mangle)]
@@ -357,12 +562,17 @@ pub unsafe extern "C" fn ftell(fp: *mut c_void) -> i64 {
     if fp.is_null() {
         return -1;
     }
-    let handle = (fp as u64) - 1;
-    let mut res: u64 = 0;
-    unsafe {
-        core::arch::asm!("int 0x80", in("rax") SYS_FS_SEEK_HANDLE, in("rdi") handle, in("rsi") 0u64, in("rdx") 1u64, lateout("rax") res);
+    let file = unsafe { &mut *(fp as *mut KernelFile) };
+    if file.mode == FILE_MODE_READ {
+        let handle = file.handle;
+        let mut res: u64 = 0;
+        unsafe {
+            core::arch::asm!("int 0x80", in("rax") SYS_FS_SEEK_HANDLE, in("rdi") handle, in("rsi") 0u64, in("rdx") 1u64, lateout("rax") res);
+        }
+        res as i64
+    } else {
+        file.pos as i64
     }
-    res as i64
 }
 
 #[unsafe(no_mangle)]
@@ -370,37 +580,87 @@ pub unsafe extern "C" fn fclose(fp: *mut c_void) -> i32 {
     if fp.is_null() {
         return -1;
     }
-    let handle = (fp as u64) - 1;
-    unsafe {
-        core::arch::asm!("int 0x80", in("rax") SYS_FS_CLOSE, in("rdi") handle);
+    let file = unsafe { &mut *(fp as *mut KernelFile) };
+    if file.mode == FILE_MODE_READ {
+        unsafe {
+            core::arch::asm!("int 0x80", in("rax") SYS_FS_CLOSE, in("rdi") file.handle);
+        }
+        0
+    } else {
+        unsafe { flush_kernel_file(fp as *mut KernelFile) }
     }
-    0
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn fwrite(
-    _ptr: *const c_void,
-    _size: usize,
-    _nmemb: usize,
-    _stream: *mut c_void,
+    ptr: *const c_void,
+    size: usize,
+    nmemb: usize,
+    stream: *mut c_void,
 ) -> usize {
-    0
+    if stream.is_null() || ptr.is_null() || size == 0 || nmemb == 0 {
+        return 0;
+    }
+
+    let file = unsafe { &mut *(stream as *mut KernelFile) };
+    if file.mode != FILE_MODE_WRITE {
+        return 0;
+    }
+
+    let bytes = size.saturating_mul(nmemb);
+    let end = file.pos.saturating_add(bytes);
+    if !unsafe { file_reserve(stream as *mut KernelFile, end) } {
+        return 0;
+    }
+
+    unsafe {
+        core::ptr::copy_nonoverlapping(ptr as *const u8, file.buffer.add(file.pos), bytes);
+    }
+    file.pos = end;
+    if end > file.len {
+        file.len = end;
+    }
+
+    nmemb
 }
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn fflush(_stream: *mut c_void) -> i32 {
-    0
+pub unsafe extern "C" fn fflush(stream: *mut c_void) -> i32 {
+    if stream.is_null() {
+        return -1;
+    }
+    unsafe { flush_kernel_file(stream as *mut KernelFile) }
 }
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn remove(_path: *const i8) -> i32 {
-    0
+pub unsafe extern "C" fn remove(path: *const i8) -> i32 {
+    let mut norm_path_buf = [0u8; 512];
+    let kernel_path = unsafe { normalize_kernel_path(path, &mut norm_path_buf) };
+    let mut res: u64 = u64::MAX;
+    unsafe {
+        core::arch::asm!("int 0x80", in("rax") SYS_FS_REMOVE, in("rdi") kernel_path as u64, lateout("rax") res);
+    }
+    if res == u64::MAX { -1 } else { 0 }
 }
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn rename(_old: *const i8, _new: *const i8) -> i32 {
-    0
+pub unsafe extern "C" fn rename(old: *const i8, new: *const i8) -> i32 {
+    let mut old_buf = [0u8; 512];
+    let mut new_buf = [0u8; 512];
+    let kernel_old = unsafe { normalize_kernel_path(old, &mut old_buf) };
+    let kernel_new = unsafe { normalize_kernel_path(new, &mut new_buf) };
+    let mut res: u64 = u64::MAX;
+    unsafe {
+        core::arch::asm!("int 0x80", in("rax") SYS_FS_RENAME, in("rdi") kernel_old as u64, in("rsi") kernel_new as u64, lateout("rax") res);
+    }
+    if res == u64::MAX { -1 } else { 0 }
 }
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn mkdir(_path: *const i8, _mode: u32) -> i32 {
-    0
+pub unsafe extern "C" fn mkdir(path: *const i8, _mode: u32) -> i32 {
+    let mut norm_path_buf = [0u8; 512];
+    let kernel_path = unsafe { normalize_kernel_path(path, &mut norm_path_buf) };
+    let mut res: u64 = u64::MAX;
+    unsafe {
+        core::arch::asm!("int 0x80", in("rax") SYS_FS_MKDIR, in("rdi") kernel_path as u64, lateout("rax") res);
+    }
+    if res == u64::MAX { -1 } else { 0 }
 }
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn access(path: *const c_char, _mode: i32) -> i32 {

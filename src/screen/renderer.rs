@@ -192,40 +192,37 @@ impl<'a> FramebufferWriter<'a> {
     }
 
     pub fn blit_buffer(&mut self, src_ptr: *const u32, src_width: u32, src_height: u32) {
-        // Simple 2x scaling if src is 320x200 and dest is 640x400+
-        let scale = if src_width == 320 && src_height == 200 && self.width >= 640 && self.height >= 400 {
-            2
-        } else {
-            1
-        };
+        if src_ptr.is_null() || src_width == 0 || src_height == 0 {
+            return;
+        }
 
+        let dst_width = self.width as usize;
+        let dst_height = self.height as usize;
+        if dst_width == 0 || dst_height == 0 {
+            return;
+        }
+
+        let src_w = src_width as usize;
+        let src_h = src_height as usize;
         let fb_u32 = self.buffer.as_mut_ptr() as *mut u32;
         let pitch_u32 = (self.pitch / 4) as usize;
 
-        // Ensure we don't overflow the source or destination
-        let max_src_y = src_height as usize;
-        let max_src_x = src_width as usize;
+        // Scale source to fill the full display area (nearest-neighbor).
+        for dy in 0..dst_height {
+            let sy = (dy * src_h) / dst_height;
+            let src_row = sy * src_w;
+            let dst_row = dy * pitch_u32;
 
-        for y in 0..max_src_y {
-            for x in 0..max_src_x {
-                let color = unsafe { *src_ptr.add(y * max_src_x + x) };
-                
-                // Draw into backbuffer with scaling
-                for sy in 0..scale {
-                    for sx in 0..scale {
-                        let dest_x = (x * scale + sx);
-                        let dest_y = (y * scale + sy);
-                        if dest_x < self.width as usize && dest_y < self.height as usize {
-                            unsafe {
-                                *fb_u32.add(dest_y * pitch_u32 + dest_x) = color;
-                            }
-                        }
-                    }
+            for dx in 0..dst_width {
+                let sx = (dx * src_w) / dst_width;
+                let color = unsafe { *src_ptr.add(src_row + sx) };
+                unsafe {
+                    *fb_u32.add(dst_row + dx) = color;
                 }
             }
         }
-        
-        // Mark the whole screen as dirty and request update
+
+        // Mark the whole screen as dirty and request update.
         self.dirty_min_y = 0;
         self.dirty_max_y = self.height as usize;
         self.needs_hw_update.store(true, Ordering::Relaxed);

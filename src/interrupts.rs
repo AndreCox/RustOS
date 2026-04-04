@@ -35,6 +35,41 @@ unsafe fn user_cstr_to_string(ptr: u64, max_len: usize) -> Option<String> {
     Some(s.into())
 }
 
+fn normalize_fs_path(path: &str) -> String {
+    // Accept relative paths from userland by normalizing to root-anchored paths.
+    let bytes = path.as_bytes();
+    let mut i = 0usize;
+
+    while i + 1 < bytes.len() && bytes[i] == b'.' && bytes[i + 1] == b'/' {
+        i += 2;
+    }
+
+    let mut normalized = String::from("/");
+    let mut wrote_any = false;
+    let mut last_was_sep = true;
+
+    for &b in &bytes[i..] {
+        let c = if b == b'\\' { b'/' } else { b };
+        if c == b'/' {
+            if !last_was_sep {
+                normalized.push('/');
+                last_was_sep = true;
+            }
+            continue;
+        }
+
+        normalized.push(c as char);
+        wrote_any = true;
+        last_was_sep = false;
+    }
+
+    if !wrote_any {
+        return String::from("/");
+    }
+
+    normalized
+}
+
 unsafe fn sys_fs_read(path_ptr: u64, buf_ptr: u64, len: u64) -> u64 {
     if buf_ptr == 0 || len == 0 {
         return 0;
@@ -42,7 +77,7 @@ unsafe fn sys_fs_read(path_ptr: u64, buf_ptr: u64, len: u64) -> u64 {
 
     let read_len = core::cmp::min(len as usize, MAX_SYSCALL_RW);
     let path = match unsafe { user_cstr_to_string(path_ptr, MAX_SYSCALL_PATH) } {
-        Some(p) => p,
+        Some(p) => normalize_fs_path(&p),
         None => return SYSCALL_ERR,
     };
 
@@ -66,7 +101,7 @@ unsafe fn sys_fs_read(path_ptr: u64, buf_ptr: u64, len: u64) -> u64 {
 
 unsafe fn sys_fs_open(path_ptr: u64) -> u64 {
     let path = match user_cstr_to_string(path_ptr, MAX_SYSCALL_PATH) {
-        Some(p) => p,
+        Some(p) => normalize_fs_path(&p),
         None => return SYSCALL_ERR,
     };
 
@@ -167,6 +202,64 @@ unsafe fn sys_fs_close(handle: u64) {
     }
 }
 
+unsafe fn sys_fs_mkdir(path_ptr: u64) -> u64 {
+    let path = match unsafe { user_cstr_to_string(path_ptr, MAX_SYSCALL_PATH) } {
+        Some(p) => normalize_fs_path(&p),
+        None => return SYSCALL_ERR,
+    };
+
+    let mut fs_lock = crate::fs::FILESYSTEM.lock();
+    let fs = match fs_lock.as_mut() {
+        Some(fs) => fs,
+        None => return SYSCALL_ERR,
+    };
+
+    match fs.create_dir(path.as_str()) {
+        Ok(()) | Err(simple_fatfs::FSError::AlreadyExists) => 0,
+        Err(_) => SYSCALL_ERR,
+    }
+}
+
+unsafe fn sys_fs_remove(path_ptr: u64) -> u64 {
+    let path = match unsafe { user_cstr_to_string(path_ptr, MAX_SYSCALL_PATH) } {
+        Some(p) => normalize_fs_path(&p),
+        None => return SYSCALL_ERR,
+    };
+
+    let mut fs_lock = crate::fs::FILESYSTEM.lock();
+    let fs = match fs_lock.as_mut() {
+        Some(fs) => fs,
+        None => return SYSCALL_ERR,
+    };
+
+    match fs.remove_file(path.as_str()) {
+        Ok(()) => 0,
+        Err(_) => SYSCALL_ERR,
+    }
+}
+
+unsafe fn sys_fs_rename(from_ptr: u64, to_ptr: u64) -> u64 {
+    let from = match unsafe { user_cstr_to_string(from_ptr, MAX_SYSCALL_PATH) } {
+        Some(p) => normalize_fs_path(&p),
+        None => return SYSCALL_ERR,
+    };
+    let to = match unsafe { user_cstr_to_string(to_ptr, MAX_SYSCALL_PATH) } {
+        Some(p) => normalize_fs_path(&p),
+        None => return SYSCALL_ERR,
+    };
+
+    let mut fs_lock = crate::fs::FILESYSTEM.lock();
+    let fs = match fs_lock.as_mut() {
+        Some(fs) => fs,
+        None => return SYSCALL_ERR,
+    };
+
+    match fs.rename(from.as_str(), to.as_str()) {
+        Ok(()) => 0,
+        Err(_) => SYSCALL_ERR,
+    }
+}
+
 unsafe fn sys_fs_write(path_ptr: u64, buf_ptr: u64, len: u64) -> u64 {
     if buf_ptr == 0 || len == 0 {
         return 0;
@@ -174,7 +267,7 @@ unsafe fn sys_fs_write(path_ptr: u64, buf_ptr: u64, len: u64) -> u64 {
 
     let write_len = core::cmp::min(len as usize, MAX_SYSCALL_RW);
     let path = match unsafe { user_cstr_to_string(path_ptr, MAX_SYSCALL_PATH) } {
-        Some(p) => p,
+        Some(p) => normalize_fs_path(&p),
         None => return SYSCALL_ERR,
     };
 
@@ -705,6 +798,18 @@ pub extern "C" fn syscall_handler(frame: &mut InterruptStackFrame) -> u64 {
         17 => {
             // sys_exit_exclusive_graphics()
             crate::screen::exit_exclusive_mode();
+        }
+        18 => {
+            // sys_fs_mkdir(path_ptr)
+            frame.rax = unsafe { sys_fs_mkdir(arg1) };
+        }
+        19 => {
+            // sys_fs_remove(path_ptr)
+            frame.rax = unsafe { sys_fs_remove(arg1) };
+        }
+        20 => {
+            // sys_fs_rename(from_ptr, to_ptr)
+            frame.rax = unsafe { sys_fs_rename(arg1, arg2) };
         }
         _ => {
             serial_println!("Unknown syscall: {}", syscall_nr);
