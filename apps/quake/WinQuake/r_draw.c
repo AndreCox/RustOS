@@ -68,7 +68,6 @@ float			r_u1, r_v1, r_lzi1;
 int				r_ceilv1;
 
 qboolean	r_lastvertvalid;
-static int	r_emitedge_warns;
 
 
 #if	!id386
@@ -103,16 +102,6 @@ void R_EmitEdge (mvertex_t *pv0, mvertex_t *pv1)
 	// transform and project
 		VectorSubtract (world, modelorg, local);
 		TransformVector (local, transformed);
-
-		if (IS_NAN(transformed[0]) || IS_NAN(transformed[1]) || IS_NAN(transformed[2]))
-		{
-			if (r_emitedge_warns < 64)
-			{
-				Sys_Printf("[quake-debug] R_EmitEdge: NaN transformed v0\n");
-				r_emitedge_warns++;
-			}
-			return;
-		}
 	
 		if (transformed[2] < NEAR_CLIP)
 			transformed[2] = NEAR_CLIP;
@@ -129,15 +118,6 @@ void R_EmitEdge (mvertex_t *pv0, mvertex_t *pv1)
 	
 		scale = yscale * lzi0;
 		v0 = (ycenter - scale*transformed[1]);
-		if (IS_NAN(u0) || IS_NAN(v0))
-		{
-			if (r_emitedge_warns < 64)
-			{
-				Sys_Printf("[quake-debug] R_EmitEdge: NaN projected v0\n");
-				r_emitedge_warns++;
-			}
-			return;
-		}
 		if (v0 < r_refdef.fvrecty_adj)
 			v0 = r_refdef.fvrecty_adj;
 		if (v0 > r_refdef.fvrectbottom_adj)
@@ -151,16 +131,6 @@ void R_EmitEdge (mvertex_t *pv0, mvertex_t *pv1)
 // transform and project
 	VectorSubtract (world, modelorg, local);
 	TransformVector (local, transformed);
-
-	if (IS_NAN(transformed[0]) || IS_NAN(transformed[1]) || IS_NAN(transformed[2]))
-	{
-		if (r_emitedge_warns < 64)
-		{
-			Sys_Printf("[quake-debug] R_EmitEdge: NaN transformed v1\n");
-			r_emitedge_warns++;
-		}
-		return;
-	}
 
 	if (transformed[2] < NEAR_CLIP)
 		transformed[2] = NEAR_CLIP;
@@ -176,15 +146,6 @@ void R_EmitEdge (mvertex_t *pv0, mvertex_t *pv1)
 
 	scale = yscale * r_lzi1;
 	r_v1 = (ycenter - scale*transformed[1]);
-	if (IS_NAN(r_u1) || IS_NAN(r_v1))
-	{
-		if (r_emitedge_warns < 64)
-		{
-			Sys_Printf("[quake-debug] R_EmitEdge: NaN projected v1\n");
-			r_emitedge_warns++;
-		}
-		return;
-	}
 	if (r_v1 < r_refdef.fvrecty_adj)
 		r_v1 = r_refdef.fvrecty_adj;
 	if (r_v1 > r_refdef.fvrectbottom_adj)
@@ -235,11 +196,7 @@ void R_EmitEdge (mvertex_t *pv0, mvertex_t *pv1)
 		edge->surfs[0] = surface_p - surfaces;
 		edge->surfs[1] = 0;
 
-		if (r_v1 == v0)
-			return;
 		u_step = ((r_u1 - u0) / (r_v1 - v0));
-		if (IS_NAN(u_step))
-			return;
 		u = u0 + ((float)v - v0) * u_step;
 	}
 	else
@@ -251,11 +208,7 @@ void R_EmitEdge (mvertex_t *pv0, mvertex_t *pv1)
 		edge->surfs[0] = 0;
 		edge->surfs[1] = surface_p - surfaces;
 
-		if (v0 == r_v1)
-			return;
 		u_step = ((u0 - r_u1) / (v0 - r_v1));
-		if (IS_NAN(u_step))
-			return;
 		u = r_u1 + ((float)v - r_v1) * u_step;
 	}
 
@@ -271,12 +224,6 @@ void R_EmitEdge (mvertex_t *pv0, mvertex_t *pv1)
 		edge->u = r_refdef.vrect_x_adj_shift20;
 	if (edge->u > r_refdef.vrectright_adj_shift20)
 		edge->u = r_refdef.vrectright_adj_shift20;
-	if (v < 0 || v >= MAXHEIGHT || v2 < 0 || v2 >= MAXHEIGHT)
-	{
-		Sys_Printf("[quake-debug] R_EmitEdge: scanline out of range v=%i v2=%i vrect.y=%i vrectbottom=%i\n",
-			v, v2, r_refdef.vrect.y, r_refdef.vrectbottom);
-		return;
-	}
 
 //
 // sort the edge in normally

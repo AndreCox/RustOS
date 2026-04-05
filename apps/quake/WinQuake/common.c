@@ -912,10 +912,8 @@ char *COM_Parse (char *data)
 {
 	int             c;
 	int             len;
-	int             maxlen;
 	
 	len = 0;
-	maxlen = (int)sizeof(com_token) - 1;
 	com_token[0] = 0;
 	
 	if (!data)
@@ -951,8 +949,8 @@ skipwhite:
 				com_token[len] = 0;
 				return data;
 			}
-			if (len < maxlen)
-				com_token[len++] = c;
+			com_token[len] = c;
+			len++;
 		}
 	}
 
@@ -968,9 +966,9 @@ skipwhite:
 // parse a regular word
 	do
 	{
-		if (len < maxlen)
-			com_token[len++] = c;
+		com_token[len] = c;
 		data++;
+		len++;
 		c = *data;
 	if (c=='{' || c=='}'|| c==')'|| c=='(' || c=='\'' || c==':')
 			break;

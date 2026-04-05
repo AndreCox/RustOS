@@ -156,10 +156,8 @@ void D_PolysetDrawFinalVerts (finalvert_t *fv, int numverts)
 	{
 	// valid triangle coordinates for filling can include the bottom and
 	// right clip edges, due to the fill rule; these shouldn't be drawn
-		if ((fv->v[0] >= 0) && (fv->v[1] >= 0) &&
-			(fv->v[0] < r_refdef.vrectright) &&
-			(fv->v[1] < r_refdef.vrectbottom) &&
-			(fv->v[1] < MAXHEIGHT))
+		if ((fv->v[0] < r_refdef.vrectright) &&
+			(fv->v[1] < r_refdef.vrectbottom))
 		{
 			z = fv->v[5]>>16;
 			zbuf = zspantable[fv->v[1]] + fv->v[0];
@@ -369,8 +367,6 @@ split:
 		goto nodraw;
 	if ((lp2[1] == lp1[1]) && (lp2[0] < lp1[0]))
 		goto nodraw;
-	if (new[0] < 0 || new[1] < 0 || new[1] >= MAXHEIGHT || new[0] >= MAXWIDTH)
-		goto nodraw;
 
 
 	z = new[5]>>16;
@@ -424,13 +420,8 @@ D_PolysetScanLeftEdge
 */
 void D_PolysetScanLeftEdge (int height)
 {
-	if (height <= 0 || height > (MAXHEIGHT + 1))
-	{
-		Sys_Printf("[quake-debug] D_PolysetScanLeftEdge: invalid height=%d\n", height);
-		return;
-	}
 
-	while (height-- > 0)
+	do
 	{
 		d_pedgespanpackage->pdest = d_pdest;
 		d_pedgespanpackage->pz = d_pz;
@@ -485,7 +476,7 @@ void D_PolysetScanLeftEdge (int height)
 			d_light += d_lightbasestep;
 			d_zi += d_zibasestep;
 		}
-	}
+	} while (--height);
 }
 
 #endif	// !id386
@@ -541,13 +532,6 @@ void D_PolysetCalcGradients (int skinwidth)
 {
 	float	xstepdenominv, ystepdenominv, t0, t1;
 	float	p01_minus_p21, p11_minus_p21, p00_minus_p20, p10_minus_p20;
-
-	if (d_xdenom == 0)
-	{
-		Sys_Printf("[quake-debug] D_PolysetCalcGradients: zero d_xdenom (r_p0=(%d,%d) r_p1=(%d,%d) r_p2=(%d,%d))\n",
-			r_p0[0], r_p0[1], r_p1[0], r_p1[1], r_p2[0], r_p2[1]);
-		return;
-	}
 
 	p00_minus_p20 = r_p0[0] - r_p2[0];
 	p01_minus_p21 = r_p0[1] - r_p2[1];
@@ -636,35 +620,10 @@ void D_PolysetDrawSpans8 (spanpackage_t *pspanpackage)
 	int		llight;
 	int		lzi;
 	short	*lpz;
-	byte		*skin_end;
-
-	if (!skinstart || skinwidth <= 0 || r_affinetridesc.skinheight <= 0)
-		return;
-
-	if (skinwidth > 4096 || r_affinetridesc.skinheight > 4096)
-	{
-		Sys_Printf("[quake-debug] D_PolysetDrawSpans8: insane skin dims width=%d height=%d start=%p\n",
-			skinwidth, r_affinetridesc.skinheight, skinstart);
-		return;
-	}
-
-	skin_end = skinstart + skinwidth * r_affinetridesc.skinheight;
-	if (skin_end <= skinstart)
-	{
-		Sys_Printf("[quake-debug] D_PolysetDrawSpans8: skin_end overflow width=%d height=%d start=%p\n",
-			skinwidth, r_affinetridesc.skinheight, skinstart);
-		return;
-	}
 
 	do
 	{
 		lcount = d_aspancount - pspanpackage->count;
-		if (lcount < 0)
-		{
-			Sys_Printf("[quake-debug] D_PolysetDrawSpans8: negative span count lcount=%d aspancount=%d package_count=%d\n",
-				lcount, d_aspancount, pspanpackage->count);
-			return;
-		}
 
 		errorterm += erroradjustup;
 		if (errorterm >= 0)
@@ -682,13 +641,6 @@ void D_PolysetDrawSpans8 (spanpackage_t *pspanpackage)
 			lpdest = pspanpackage->pdest;
 			lptex = pspanpackage->ptex;
 			lpz = pspanpackage->pz;
-			if (lptex < skinstart || lptex >= skin_end)
-			{
-				Sys_Printf("[quake-debug] D_PolysetDrawSpans8: lptex out of range tex=%p start=%p end=%p count=%d z=%p dest=%p\n",
-					lptex, skinstart, skin_end, lcount, lpz, lpdest);
-				pspanpackage++;
-				return;
-			}
 			lsfrac = pspanpackage->sfrac;
 			ltfrac = pspanpackage->tfrac;
 			llight = pspanpackage->light;
@@ -772,13 +724,6 @@ void D_RasterizeAliasPolySmooth (void)
 	int				initialleftheight, initialrightheight;
 	int				*plefttop, *prighttop, *pleftbottom, *prightbottom;
 	int				working_lstepx, originalcount;
-	byte			*skin_end;
-
-	if (!pedgetable || !pedgetable->pleftedgevert0 || !pedgetable->prightedgevert0)
-	{
-		Sys_Printf("[quake-debug] D_RasterizeAliasPolySmooth: missing edge table\n");
-		return;
-	}
 
 	plefttop = pedgetable->pleftedgevert0;
 	prighttop = pedgetable->prightedgevert0;
@@ -788,24 +733,6 @@ void D_RasterizeAliasPolySmooth (void)
 
 	initialleftheight = pleftbottom[1] - plefttop[1];
 	initialrightheight = prightbottom[1] - prighttop[1];
-
-	if (initialleftheight <= 0 || initialrightheight <= 0 ||
-		initialleftheight > MAXHEIGHT + 1 || initialrightheight > MAXHEIGHT + 1)
-	{
-		Sys_Printf("[quake-debug] D_RasterizeAliasPolySmooth: bad edge heights left=%d right=%d lt=(%d,%d) lb=(%d,%d) rt=(%d,%d) rb=(%d,%d) d_xdenom=%d\n",
-			initialleftheight, initialrightheight,
-			plefttop[0], plefttop[1], pleftbottom[0], pleftbottom[1],
-			prighttop[0], prighttop[1], prightbottom[0], prightbottom[1], d_xdenom);
-		return;
-	}
-
-	if (d_xdenom == 0)
-	{
-		Sys_Printf("[quake-debug] D_RasterizeAliasPolySmooth: zero d_xdenom lt=(%d,%d) lb=(%d,%d) rt=(%d,%d) rb=(%d,%d)\n",
-			plefttop[0], plefttop[1], pleftbottom[0], pleftbottom[1],
-			prighttop[0], prighttop[1], prightbottom[0], prightbottom[1]);
-		return;
-	}
 
 //
 // set the s, t, and light gradients, which are consistent across the triangle
@@ -840,29 +767,6 @@ void D_RasterizeAliasPolySmooth (void)
 	d_pdest = (byte *)d_viewbuffer +
 			ystart * screenwidth + plefttop[0];
 	d_pz = d_pzbuffer + ystart * d_zwidth + plefttop[0];
-	skin_end = skinstart + skinwidth * r_affinetridesc.skinheight;
-
-	if (ystart < 0 || ystart >= MAXHEIGHT || plefttop[0] < 0 || plefttop[0] >= MAXWIDTH)
-	{
-		Sys_Printf("[quake-debug] D_RasterizeAliasPolySmooth: bad start coord y=%d x=%d lt=(%d,%d,%d,%d) rt=(%d,%d,%d,%d) lb=(%d,%d,%d,%d) rb=(%d,%d,%d,%d)\n",
-			ystart, plefttop[0],
-			plefttop[0], plefttop[1], plefttop[2], plefttop[3],
-			prighttop[0], prighttop[1], prighttop[2], prighttop[3],
-			pleftbottom[0], pleftbottom[1], pleftbottom[2], pleftbottom[3],
-			prightbottom[0], prightbottom[1], prightbottom[2], prightbottom[3]);
-		return;
-	}
-
-	if (d_ptex < skinstart || d_ptex >= skin_end)
-	{
-		Sys_Printf("[quake-debug] D_RasterizeAliasPolySmooth: bad start tex=%p start=%p end=%p lt=(%d,%d,%d,%d) rt=(%d,%d,%d,%d) lb=(%d,%d,%d,%d) rb=(%d,%d,%d,%d)\n",
-			d_ptex, skinstart, skin_end,
-			plefttop[0], plefttop[1], plefttop[2], plefttop[3],
-			prighttop[0], prighttop[1], prighttop[2], prighttop[3],
-			pleftbottom[0], pleftbottom[1], pleftbottom[2], pleftbottom[3],
-			prightbottom[0], prightbottom[1], prightbottom[2], prightbottom[3]);
-		return;
-	}
 
 	if (initialleftheight == 1)
 	{
@@ -947,11 +851,6 @@ void D_RasterizeAliasPolySmooth (void)
 		pleftbottom = pedgetable->pleftedgevert2;
 
 		height = pleftbottom[1] - plefttop[1];
-		if (height <= 0 || height > (MAXHEIGHT + 1))
-		{
-			Sys_Printf("[quake-debug] D_RasterizeAliasPolySmooth: invalid second-left height=%d\n", height);
-			goto SkipSecondLeft;
-		}
 
 // TODO: make this a function; modularize this function in general
 
@@ -1035,8 +934,6 @@ void D_RasterizeAliasPolySmooth (void)
 		}
 	}
 
-SkipSecondLeft:
-
 // scan out the top (and possibly only) part of the right edge, updating the
 // count field
 	d_pedgespanpackage = a_spans;
@@ -1045,11 +942,6 @@ SkipSecondLeft:
 						  prightbottom[0], prightbottom[1]);
 	d_aspancount = 0;
 	d_countextrastep = ubasestep + 1;
-	if (initialrightheight < 0 || initialrightheight >= DPS_MAXSPANS)
-	{
-		Sys_Printf("[quake-debug] D_RasterizeAliasPolySmooth: invalid initialrightheight=%d\n", initialrightheight);
-		return;
-	}
 	originalcount = a_spans[initialrightheight].count;
 	a_spans[initialrightheight].count = -999999; // mark end of the spanpackages
 	D_PolysetDrawSpans8 (a_spans);
@@ -1069,22 +961,11 @@ SkipSecondLeft:
 		prightbottom = pedgetable->prightedgevert2;
 
 		height = prightbottom[1] - prighttop[1];
-		if (height <= 0 || height > (MAXHEIGHT + 1))
-		{
-			Sys_Printf("[quake-debug] D_RasterizeAliasPolySmooth: invalid second-right height=%d\n", height);
-			return;
-		}
 
 		D_PolysetSetUpForLineScan(prighttop[0], prighttop[1],
 							  prightbottom[0], prightbottom[1]);
 
 		d_countextrastep = ubasestep + 1;
-		if (initialrightheight + height < 0 || initialrightheight + height >= DPS_MAXSPANS)
-		{
-			Sys_Printf("[quake-debug] D_RasterizeAliasPolySmooth: invalid span end index=%d\n",
-				initialrightheight + height);
-			return;
-		}
 		a_spans[initialrightheight + height].count = -999999;
 											// mark end of the spanpackages
 		D_PolysetDrawSpans8 (pstart);

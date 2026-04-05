@@ -298,10 +298,6 @@ void D_DrawSurfaces (void)
 
 			// FIXME: make this passed in to D_CacheSurface
 				pcurrentcache = D_CacheSurface (pface, miplevel);
-			if (!pcurrentcache)
-			{
-				continue;
-			}
 
 				cacheblock = (pixel_t *)pcurrentcache->data;
 				cachewidth = pcurrentcache->width;

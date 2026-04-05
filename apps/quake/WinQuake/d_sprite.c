@@ -26,7 +26,6 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 static int		sprite_height;
 static int		minindex, maxindex;
 static sspan_t	*sprite_spans;
-static int		sprite_debug_warns;
 
 #if	!id386
 
@@ -65,32 +64,8 @@ void D_SpriteDrawSpans (sspan_t *pspan)
 
 		count = pspan->count;
 
-			if (pspan->v < 0 || pspan->v >= MAXHEIGHT || pspan->u < 0 || pspan->u >= screenwidth)
-			{
-				if (sprite_debug_warns < 64)
-				{
-					Sys_Printf("[quake-debug] D_SpriteDrawSpans: bad span coord u=%d v=%d count=%d\n",
-						pspan->u, pspan->v, count);
-					sprite_debug_warns++;
-				}
-				goto NextSpan;
-			}
-
-			if (count <= 0)
+		if (count <= 0)
 			goto NextSpan;
-
-			if (count > screenwidth - pspan->u)
-			{
-				if (sprite_debug_warns < 64)
-				{
-					Sys_Printf("[quake-debug] D_SpriteDrawSpans: clamping span count=%d at u=%d v=%d\n",
-						count, pspan->u, pspan->v);
-					sprite_debug_warns++;
-				}
-				count = screenwidth - pspan->u;
-				if (count <= 0)
-					goto NextSpan;
-			}
 
 	// calculate the initial s/z, t/z, 1/z, s, and t and clamp
 		du = (float)pspan->u;
@@ -122,9 +97,6 @@ void D_SpriteDrawSpans (sspan_t *pspan)
 				spancount = 8;
 			else
 				spancount = count;
-
-				if (spancount <= 0)
-					break;
 
 			count -= spancount;
 
@@ -344,29 +316,7 @@ void D_SpriteScanRightEdge (void)
 
 			for (v=itop ; v<ibottom ; v++)
 			{
-				int span_count = (u >> 16) - pspan->u;
-				if (span_count < 0)
-				{
-					if (sprite_debug_warns < 64)
-					{
-						Sys_Printf("[quake-debug] D_SpriteScanRightEdge: negative span count=%d u=%d v=%d\n",
-							span_count, pspan->u, v);
-						sprite_debug_warns++;
-					}
-					span_count = 0;
-				}
-				else if (span_count > screenwidth)
-				{
-					if (sprite_debug_warns < 64)
-					{
-						Sys_Printf("[quake-debug] D_SpriteScanRightEdge: huge span count=%d u=%d v=%d\n",
-							span_count, pspan->u, v);
-						sprite_debug_warns++;
-					}
-					span_count = screenwidth;
-				}
-
-				pspan->count = span_count;
+				pspan->count = (u >> 16) - pspan->u;
 				u += u_step;
 				pspan++;
 			}
