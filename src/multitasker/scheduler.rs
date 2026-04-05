@@ -1,3 +1,12 @@
+/******************************************************************************************************************************************************************************************************************************************************
+ *                                                                                                                   DOCUMENTATION                                                                                                                    *
+ *                                                                              THIS IS THE SCHEDULER, IT MANAGES THE QUEUE OF TASKS AND DECIDES WHICH ONE TO RUN NEXT,                                                                               *
+ *                                     WE STORE THE SCHEDULER IN A GLOBAL MUTEX<OPTION<SCHEDULER>> SO THAT IT CAN BE SAFELY ACCESSED FROM THE TIMER INTERRUPT HANDLER, WHICH IS WHERE THE CONTEXT SWITCH HAPPENS.                                     *
+ * THE SCHEDULER ALSO SAVES AND RESTORES THE FPU/SSE STATE OF TASKS DURING CONTEXT SWITCHES, USING THE FXSAVE/FXRSTOR INSTRUCTIONS. THIS IS CRUCIAL FOR SUPPORTING FLOATING-POINT OPERATIONS IN USER TASKS WITHOUT CORRUPTING THE KERNEL'S FPU STATE. *
+ *                                   WE DEALLOCATE TASKS WHEN THEY ARE KILLED OR EXITED, THIS IS DONE USING THE DROP IMPLEMENTATION OF THE TASK STRUCT, WHICH DEALLOCATES THE STACK MEMORY AND ANY OWNED RESOURCES.                                   *
+ *                                                                                                       THIS CAN BE FOUND IN THE TASK.RS FILE.                                                                                                       *
+ ******************************************************************************************************************************************************************************************************************************************************/
+
 use super::task::Task;
 use crate::alloc::collections::VecDeque;
 use spin::Mutex;
@@ -55,8 +64,6 @@ impl Scheduler {
                     task.id,
                     task.status
                 );
-                // DO NOT push_back. Let 'task' drop here to free its metadata.
-                // Note: You should ideally deallocate the stack memory here too.
             } else {
                 task.stack_pointer = stack_pointer;
                 task.status = super::task::TaskStatus::Ready;

@@ -1,3 +1,8 @@
+/****************************************************
+ *                  DOCUMENTATION                   *
+ * RANDOM HELPER FUNCTIONS THAT WE CAN USE ANYWHERE *
+ ****************************************************/
+
 use core::arch::asm;
 
 // Halt and catch fire function

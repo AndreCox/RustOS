@@ -174,16 +174,32 @@ pub extern "C" fn kmain() -> ! {
     multitasker::init_multitasking();
     println!("Multitasking setup complete.");
 
-    let idle_task =
-        crate::multitasker::task::Task::new(0, crate::multitasker::idle_task as *const () as u64, 0);
-    let _compositor_task =
-        crate::multitasker::task::Task::new(3, crate::screen::compositor_task as *const () as u64, 0);
+    let idle_task = crate::multitasker::task::Task::new(
+        0,
+        crate::multitasker::idle_task as *const () as u64,
+        0,
+        None,
+    );
+    let _compositor_task = crate::multitasker::task::Task::new(
+        3,
+        crate::screen::compositor_task as *const () as u64,
+        0,
+        None,
+    );
     let task_a: multitasker::task::Task =
-        crate::multitasker::task::Task::new(5, task_a as *const () as u64, 0);
-    let task_shell =
-        crate::multitasker::task::Task::new(6, crate::shell::task_shell as *const () as u64, 0);
-    let task_serial =
-        crate::multitasker::task::Task::new(7, crate::screen::serial_task as *const () as u64, 0);
+        crate::multitasker::task::Task::new(5, task_a as *const () as u64, 0, None);
+    let task_shell = crate::multitasker::task::Task::new(
+        6,
+        crate::shell::task_shell as *const () as u64,
+        0,
+        None,
+    );
+    let task_serial = crate::multitasker::task::Task::new(
+        7,
+        crate::screen::serial_task as *const () as u64,
+        0,
+        None,
+    );
 
     let mut sched = crate::multitasker::scheduler::SCHEDULER.lock();
     if let Some(ref mut scheduler) = *sched {

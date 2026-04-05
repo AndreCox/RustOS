@@ -1,3 +1,10 @@
+/********************************************************************************************************************************************
+ *                                                              DOCUMENTATION                                                               *
+ *                                                   THIS MODULE IMPLEMENTS MULTITASKING,                                                   *
+ *                     RIGHT NOW INIT MULTITASKING INITIALIZES A SCHEDULER AND CREATES THE MAIN TASK (THE KERNEL TASK).                     *
+ * IT ALSO IMPLEMENTS A YIELD_NOW FUNCTION THAT TRIGGERS THE SCHEDULER INTERRUPT, AND AN IDLE TASK THAT RUNS WHEN NO OTHER TASKS ARE READY. *
+ ********************************************************************************************************************************************/
+
 pub mod scheduler;
 pub mod task;
 
@@ -11,10 +18,15 @@ pub fn init_multitasking() {
         wake_at: 0,
         status: task::TaskStatus::Ready,
         fpu_state: task::FpuState::default(),
+        stack_base: 0,
+        stack_size: 0,
+        owned_program_image: None,
+        owned_arg_bytes: None,
     };
 
+    // We set the current task to the main task before enabling the scheduler
     new_scheduler.current_task = Some(main_task);
-    *scheduler::SCHEDULER.lock() = Some(new_scheduler);
+    *scheduler::SCHEDULER.lock() = Some(new_scheduler); // Publish the scheduler for use by the timer interrupt handler
 }
 
 pub fn yield_now() {

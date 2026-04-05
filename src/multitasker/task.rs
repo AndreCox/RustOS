@@ -1,4 +1,15 @@
-use crate::alloc::alloc::{Layout, alloc};
+/*********************************************************************************************************************************************************************************************************************************************************
+ *                                                                                                                     DOCUMENTATION                                                                                                                     *
+ *                                                                 THE TASK CODE IS RESPONSIBLE FOR DEFINING THE TASK STRUCT, THIS REPRESENTS A SINGLE TASK IN OUR MULTITASKING SYSTEM.                                                                  *
+ *                                                                                             WE HAVE A DEFAULT FPU STATE THAT WE INITIALIZE FOR EACH TASK.                                                                                             *
+ *                      WE THEN CREATE A TASK WHICH IS THE HIGH LEVEL ABSTRACTION OF A TASK, CONTAINING ITS ID, STACK POINTER, WAKE TIME, STATUS, FPU STATE, AND SOME BOOKKEEPING FIELDS FOR MEMORY MANAGEMENT AND OWNED RESOURCES.                      *
+ * THE TASKCONTEXT STRUCT IS THE LOW LEVEL CPU CONTEXT THAT WE SAVE AND RESTORE DURING CONTEXT SWITCHES, IT CONTAINS ALL THE GENERAL PURPOSE REGISTERS, AS WELL AS THE INSTRUCTION POINTER, CODE SEGMENT, FLAGS, AND STACK INFORMATION NEEDED FOR IRETQ. *
+ *                                              WE ALSO IMPLEMENT A DROP TRAIT FOR TASK TO ENSURE THAT WHEN A TASK IS DROPPED, ITS ALLOCATED STACK MEMORY IS PROPERLY DEALLOCATED TO PREVENT MEMORY LEAKS.                                               *
+ *********************************************************************************************************************************************************************************************************************************************************/
+use crate::{
+    alloc::alloc::{Layout, alloc, dealloc},
+    alloc::boxed::Box,
+};
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
 pub enum TaskStatus {
@@ -26,14 +37,20 @@ impl Default for FpuState {
 }
 #[repr(C, align(16))]
 
+// This Task is a high level abstraction of the Task
 pub struct Task {
     pub fpu_state: FpuState,
     pub id: u64,
-    pub stack_pointer: u64,
+    pub stack_pointer: u64, // This is the pointer to the TaskContext on the task's stack.
     pub wake_at: u64,
     pub status: TaskStatus,
+    pub stack_base: u64, // The base of the allocated stack, used for deallocation.
+    pub stack_size: usize, // The size of the allocated stack, used for deallocation.
+    pub owned_program_image: Option<Box<[u8]>>, // User program image kept alive for the task lifetime.
+    pub owned_arg_bytes: Option<Box<[u8]>>, // NUL-terminated argument bytes kept alive for task lifetime.
 }
 
+// This is the low level CPU context, we save and restore it during context switches.
 #[repr(C)]
 #[derive(Default)]
 struct TaskContext {
@@ -57,14 +74,14 @@ struct TaskContext {
     error_code: u64,
 
     instruction_pointer: u64,
-    code_segment: u64,
-    cpu_flags: u64,
-    stack_pointer: u64,
-    stack_segment: u64,
+    code_segment: u64, // This will be 0x28 for kernel tasks and 0x23 for user tasks, to ensure correct privilege level after iretq.
+    cpu_flags: u64,    // holds the RFLAGS value to be loaded during iretq
+    stack_pointer: u64, // This is the value that will be loaded into RSP when iretq finishes.
+    stack_segment: u64, // This is the value that will be loaded into SS when iretq finishes.
 }
 
 impl Task {
-    pub fn new(id: u64, entry_point: u64, arg: u64) -> Self {
+    pub fn new(id: u64, entry_point: u64, arg: u64, user_stack_top: Option<u64>) -> Self {
         let stack_size = 1024 * 32; // 32 KB
         let layout = Layout::from_size_align(stack_size, 16).unwrap();
         let stack_base = unsafe { alloc(layout) } as u64;
@@ -76,6 +93,7 @@ impl Task {
         let context_size = core::mem::size_of::<TaskContext>() as u64;
 
         let context_ptr = (abi_compliant_top - context_size) as *mut TaskContext;
+        let task_stack_pointer = user_stack_top.unwrap_or(abi_compliant_top);
 
         unsafe {
             context_ptr.write(TaskContext {
@@ -86,9 +104,9 @@ impl Task {
                 code_segment: 0x28,
                 cpu_flags: 0x202,
 
-                // When iretq finishes, RSP will be set to this value.
-                // It must be abi_compliant_top so the function starts with (RSP % 16) == 8.
-                stack_pointer: abi_compliant_top,
+                // For kernel tasks, use the ABI-compliant top of this stack.
+                // For user tasks, use the caller-provided user stack pointer.
+                stack_pointer: task_stack_pointer,
                 stack_segment: 0x30,
                 ..Default::default()
             });
@@ -100,40 +118,33 @@ impl Task {
             wake_at: 0,
             status: TaskStatus::Ready,
             fpu_state: FpuState::default(),
+            stack_base: stack_base,
+            stack_size: stack_size,
+            owned_program_image: None,
+            owned_arg_bytes: None,
         }
     }
 
-    pub fn new_user(id: u64, entry_point: u64, arg: u64, user_stack_top: u64) -> Self {
-        let stack_size = 1024 * 32; // 32 KB
-        let layout = Layout::from_size_align(stack_size, 16).unwrap();
-        let stack_base = unsafe { alloc(layout) } as u64;
-        let stack_top = stack_base + stack_size as u64;
+    // This function allows us to attach owned memory (like the program image and argument bytes) to the task, ensuring that they will be kept alive for the lifetime of the task and automatically deallocated when the task is dropped. This is crucial for preventing memory leaks when tasks exit or are killed.
+    pub fn with_owned_memory(
+        mut self,
+        owned_program_image: Option<Box<[u8]>>,
+        owned_arg_bytes: Option<Box<[u8]>>,
+    ) -> Self {
+        self.owned_program_image = owned_program_image;
+        self.owned_arg_bytes = owned_arg_bytes;
+        self
+    }
+}
 
-        let aligned_top = stack_top & !0xF;
-        let abi_compliant_top = aligned_top - 8;
-
-        let context_size = core::mem::size_of::<TaskContext>() as u64;
-        let context_ptr = (abi_compliant_top - context_size) as *mut TaskContext;
-
-        unsafe {
-            context_ptr.write(TaskContext {
-                rbp: aligned_top,
-                rdi: arg,
-                instruction_pointer: entry_point,
-                code_segment: 0x28,
-                cpu_flags: 0x202,
-                stack_pointer: user_stack_top,
-                stack_segment: 0x30,
-                ..Default::default()
-            });
-        }
-
-        Self {
-            id,
-            stack_pointer: context_ptr as u64,
-            wake_at: 0,
-            status: TaskStatus::Ready,
-            fpu_state: FpuState::default(),
+// Drop is a built-in Rust trait that allows us to specify custom behavior when a value goes out of scope. By implementing Drop for Task, we can ensure that when a Task is dropped (for example, when it is removed from the scheduler and no longer needed), we automatically deallocate its stack memory to prevent memory leaks. This is especially important in an OS kernel where we may be creating and destroying many tasks over time.
+impl Drop for Task {
+    fn drop(&mut self) {
+        if self.stack_base != 0 {
+            let layout = Layout::from_size_align(self.stack_size, 16).unwrap();
+            unsafe {
+                dealloc(self.stack_base as *mut u8, layout);
+            }
         }
     }
 }
