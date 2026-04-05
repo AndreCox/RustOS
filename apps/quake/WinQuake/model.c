@@ -805,60 +805,17 @@ void CalcSurfaceExtents (msurface_t *s)
 
 	for (i=0 ; i<2 ; i++)
 	{	
-		double fl_arg = (double)(mins[i]/16.0f);
-		double cl_arg = (double)(maxs[i]/16.0f);
-		double fl_res = floor(fl_arg);
-		double cl_res = ceil(cl_arg);
-		bmins[i] = (int)fl_res;
-		bmaxs[i] = (int)cl_res;
-
-		if (g_zero_extent_logs < 5)
-		{
-			Sys_Printf("[quake-debug] CalcExt axis=%i mins=%d maxs=%d fl_arg=%d cl_arg=%d fl_res=%d cl_res=%d bmins=%d bmaxs=%d\n",
-				i, (int)mins[i], (int)maxs[i], (int)fl_arg, (int)cl_arg, (int)fl_res, (int)cl_res, bmins[i], bmaxs[i]);
-		}
+		bmins[i] = floor(mins[i]/16);
+		bmaxs[i] = ceil(maxs[i]/16);
 
 		s->texturemins[i] = bmins[i] * 16;
 		s->extents[i] = (bmaxs[i] - bmins[i]) * 16;
-		if ( !(tex->flags & TEX_SPECIAL) && (s->extents[i] > 256 || s->extents[i] < 0))
-		{
-			const char *texname = (tex && tex->texture) ? tex->texture->name : "<null>";
-			Sys_Printf("[quake-debug] Bad surface extents detected\n");
-			Sys_Printf("[quake-debug] model=%s surf=%i axis=%i numedges=%i firstedge=%i\n",
-				loadmodel ? loadmodel->name : "<null>", g_debug_surfnum, i, (int)s->numedges, (int)s->firstedge);
-			Sys_Printf("[quake-debug] mins=(%i,%i) maxs=(%i,%i)\n",
-				(int)mins[0], (int)mins[1], (int)maxs[0], (int)maxs[1]);
-			Sys_Printf("[quake-debug] bmins=(%i,%i) bmaxs=(%i,%i) texmins=(%i,%i) extents=(%i,%i)\n",
-				bmins[0], bmins[1], bmaxs[0], bmaxs[1],
-				(int)s->texturemins[0], (int)s->texturemins[1], (int)s->extents[0], (int)s->extents[1]);
-			Sys_Printf("[quake-debug] texflags=%i tex=%s\n", (int)tex->flags, texname);
-			if (s->extents[i] < 0)
-				s->extents[i] = 0;
-			if (s->extents[i] > 256)
-				s->extents[i] = 256;
-			Sys_Printf("[quake-debug] clamped extents axis=%i now=%i\n", i, (int)s->extents[i]);
-		}
 
-		if (!(tex->flags & TEX_SPECIAL) && s->extents[i] == 0)
-		{
-			if (g_zero_extent_logs < 200)
-			{
-				const char *texname = (tex && tex->texture) ? tex->texture->name : "<null>";
-				Sys_Printf("[quake-debug] zero surface extent\n");
-				Sys_Printf("[quake-debug] model=%s surf=%i axis=%i numedges=%i firstedge=%i\n",
-					loadmodel ? loadmodel->name : "<null>", g_debug_surfnum, i,
-					(int)s->numedges, (int)s->firstedge);
-				Sys_Printf("[quake-debug] mins=(%i,%i) maxs=(%i,%i) bmins=(%i,%i) bmaxs=(%i,%i)\n",
-					(int)mins[0], (int)mins[1], (int)maxs[0], (int)maxs[1],
-					bmins[0], bmins[1], bmaxs[0], bmaxs[1]);
-				Sys_Printf("[quake-debug] tex=%s texflags=%i texmins=(%i,%i)\n",
-					texname, (int)tex->flags,
-					(int)s->texturemins[0], (int)s->texturemins[1]);
-				g_zero_extent_logs++;
-				if (g_zero_extent_logs == 200)
-					Sys_Printf("[quake-debug] zero surface extent log limit reached\n");
-			}
-		}
+		// Clamp bad extents
+		if ( !(tex->flags & TEX_SPECIAL) && s->extents[i] > 256)
+			s->extents[i] = 256;
+		if ( !(tex->flags & TEX_SPECIAL) && s->extents[i] <= 0)
+			s->extents[i] = 16;
 	}
 }
 

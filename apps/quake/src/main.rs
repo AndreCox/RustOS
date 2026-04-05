@@ -690,8 +690,8 @@ pub unsafe extern "C" fn strtol(nptr: *const c_char, endptr: *mut *mut c_char, m
     }
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn strtod(nptr: *const c_char, endptr: *mut *mut c_char) -> f64 {
+#[inline(never)]
+fn strtod_rust(nptr: *const c_char, endptr: *mut *mut c_char) -> f64 {
     let mut s = nptr;
     while unsafe { *s == b' ' as i8 || *s == b'\t' as i8 || *s == b'\n' as i8 || *s == b'\r' as i8 }
     {
@@ -722,6 +722,34 @@ pub unsafe extern "C" fn strtod(nptr: *const c_char, endptr: *mut *mut c_char) -
         unsafe { *endptr = s as *mut c_char };
     }
     if neg { -val } else { val }
+}
+
+#[unsafe(no_mangle)]
+#[unsafe(naked)]
+pub unsafe extern "C" fn strtod(nptr: *const c_char, endptr: *mut *mut c_char) -> f64 {
+    // Call strtod_rust and move the returned soft-float f64 from rax to xmm0
+    core::arch::naked_asm!(
+        "sub rsp, 8",
+        "call {strtod_rust}",
+        "movq xmm0, rax",
+        "add rsp, 8",
+        "ret",
+        strtod_rust = sym strtod_rust
+    )
+}
+
+#[unsafe(no_mangle)]
+#[unsafe(naked)]
+pub unsafe extern "C" fn atof(nptr: *const c_char) -> f64 {
+    core::arch::naked_asm!(
+        "sub rsp, 8",
+        "xor rsi, rsi", // endptr = null
+        "call {strtod_rust}",
+        "movq xmm0, rax",
+        "add rsp, 8",
+        "ret",
+        strtod_rust = sym strtod_rust
+    )
 }
 
 #[unsafe(no_mangle)]
