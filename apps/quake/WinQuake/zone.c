@@ -216,7 +216,7 @@ Z_Realloc
 void* Z_Realloc(void* ptr, int size)
 {
 	int old_size;
-	void* old_ptr;
+	void* new_ptr;
 	memblock_t* block;
 
 	if (!ptr)
@@ -230,19 +230,18 @@ void* Z_Realloc(void* ptr, int size)
 
 	old_size = block->size;
 	old_size -= (4 + (int)sizeof(memblock_t));	/* see Z_TagMalloc() */
-	old_ptr = ptr;
 
-	Z_Free(ptr);
-	ptr = Z_TagMalloc(size, 1);
-	if (!ptr)
+	new_ptr = Z_TagMalloc(size, 1);
+	if (!new_ptr)
 		Sys_Error("Z_Realloc: failed on allocation of %i bytes", size);
 
-	if (ptr != old_ptr)
-		memmove(ptr, old_ptr, min(old_size, size));
+	memmove(new_ptr, ptr, min(old_size, size));
 	if (old_size < size)
-		memset((byte*)ptr + old_size, 0, size - old_size);
+		memset((byte*)new_ptr + old_size, 0, size - old_size);
 
-	return ptr;
+	Z_Free(ptr);
+
+	return new_ptr;
 }
 
 char* Z_Strdup(const char* s)

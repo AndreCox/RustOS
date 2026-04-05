@@ -12,6 +12,15 @@ use crate::alloc::collections::VecDeque;
 use spin::Mutex;
 use x86_64::instructions::interrupts;
 
+#[repr(C, align(16))]
+pub struct InterruptFpuSnapshot(pub [u8; 512]);
+
+#[unsafe(no_mangle)]
+pub static mut INTERRUPT_FPU_SNAPSHOT: InterruptFpuSnapshot = InterruptFpuSnapshot([0; 512]);
+
+#[unsafe(no_mangle)]
+pub static mut INTERRUPT_FPU_SNAPSHOT_VALID: u8 = 0;
+
 pub struct Scheduler {
     pub tasks: VecDeque<Task>,
     pub current_task: Option<Task>,
@@ -68,9 +77,20 @@ impl Scheduler {
                 task.stack_pointer = stack_pointer;
                 task.status = super::task::TaskStatus::Ready;
 
-                // SAVE SSE/FPU STATE
+                // SAVE SSE/FPU STATE.
+                // If we entered from an interrupt/syscall, take the snapshot captured
+                // at entry so kernel SIMD usage does not bleed into the task state.
                 unsafe {
-                    core::arch::asm!("fxsave [{}]", in(reg) &mut task.fpu_state.data);
+                    if INTERRUPT_FPU_SNAPSHOT_VALID != 0 {
+                        core::ptr::copy_nonoverlapping(
+                            core::ptr::addr_of!(INTERRUPT_FPU_SNAPSHOT.0) as *const u8,
+                            task.fpu_state.data.as_mut_ptr(),
+                            512,
+                        );
+                        INTERRUPT_FPU_SNAPSHOT_VALID = 0;
+                    } else {
+                        core::arch::asm!("fxsave [{}]", in(reg) &mut task.fpu_state.data);
+                    }
                 }
 
                 self.tasks.push_back(task);

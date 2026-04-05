@@ -48,6 +48,8 @@ global_asm!(
     isr_stub_128:
         push 0 // no error code
         push 128 // interrupt number
+        fxsave [rip + INTERRUPT_FPU_SNAPSHOT]
+        mov byte ptr [rip + INTERRUPT_FPU_SNAPSHOT_VALID], 1
         push r15; push r14; push r13; push r12
         push r11; push r10; push r9;  push r8
         push rbp; push rdi; push rsi; push rdx
@@ -61,11 +63,19 @@ global_asm!(
         pop rsi; pop rdi; pop rbp; pop r8
         pop r9;  pop r10; pop r11; pop r12
         pop r13; pop r14; pop r15
+
+        cmp byte ptr [rip + INTERRUPT_FPU_SNAPSHOT_VALID], 0
+        je 1f
+        fxrstor [rip + INTERRUPT_FPU_SNAPSHOT]
+        mov byte ptr [rip + INTERRUPT_FPU_SNAPSHOT_VALID], 0
+    1:
         add rsp, 16
         iretq
 
     /* 3. The Common Handler */
     isr_common_stub:
+        fxsave [rip + INTERRUPT_FPU_SNAPSHOT]
+        mov byte ptr [rip + INTERRUPT_FPU_SNAPSHOT_VALID], 1
         push r15; push r14; push r13; push r12
         push r11; push r10; push r9;  push r8
         push rbp; push rdi; push rsi; push rdx
@@ -82,6 +92,12 @@ global_asm!(
         pop rsi; pop rdi; pop rbp; pop r8
         pop r9;  pop r10; pop r11; pop r12
         pop r13; pop r14; pop r15
+
+        cmp byte ptr [rip + INTERRUPT_FPU_SNAPSHOT_VALID], 0
+        je 2f
+        fxrstor [rip + INTERRUPT_FPU_SNAPSHOT]
+        mov byte ptr [rip + INTERRUPT_FPU_SNAPSHOT_VALID], 0
+    2:
 
         add rsp, 16
         iretq

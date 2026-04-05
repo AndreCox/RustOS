@@ -293,8 +293,24 @@ surfcache_t *D_CacheSurface (msurface_t *surface, int miplevel)
 	surfscale = 1.0 / (1<<miplevel);
 	r_drawsurf.surfmip = miplevel;
 	r_drawsurf.surfwidth = surface->extents[0] >> miplevel;
+	if (r_drawsurf.surfwidth <= 0)
+	{
+		Sys_Printf("[quake-debug] D_CacheSurface width<=0, skipping surface (tex=%s mip=%d ext0=%d)\n",
+			surface->texinfo && surface->texinfo->texture ? surface->texinfo->texture->name : "<null>",
+			miplevel,
+			(int)surface->extents[0]);
+		return NULL;
+	}
 	r_drawsurf.rowbytes = r_drawsurf.surfwidth;
 	r_drawsurf.surfheight = surface->extents[1] >> miplevel;
+	if (r_drawsurf.surfheight <= 0)
+	{
+		Sys_Printf("[quake-debug] D_CacheSurface height<=0, skipping surface (tex=%s mip=%d ext1=%d)\n",
+			surface->texinfo && surface->texinfo->texture ? surface->texinfo->texture->name : "<null>",
+			miplevel,
+			(int)surface->extents[1]);
+		return NULL;
+	}
 	
 //
 // allocate memory if needed

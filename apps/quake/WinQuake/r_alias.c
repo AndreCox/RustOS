@@ -459,7 +459,7 @@ R_AliasTransformAndProjectFinalVerts
 void R_AliasTransformAndProjectFinalVerts (finalvert_t *fv, stvert_t *pstverts)
 {
 	int			i, temp;
-	float		lightcos, *plightnormal, zi;
+	float		lightcos, *plightnormal, zi, zdenom;
 	trivertx_t	*pverts;
 
 	pverts = r_apverts;
@@ -467,13 +467,25 @@ void R_AliasTransformAndProjectFinalVerts (finalvert_t *fv, stvert_t *pstverts)
 	for (i=0 ; i<r_anumverts ; i++, fv++, pverts++, pstverts++)
 	{
 	// transform and project
-		zi = 1.0 / (DotProduct(pverts->v, aliastransform[2]) +
-				aliastransform[2][3]);
+		zdenom = DotProduct(pverts->v, aliastransform[2]) +
+				aliastransform[2][3];
+		if (zdenom <= 0.0001 || IS_NAN(zdenom))
+		{
+			fv->v[5] = 0;
+			fv->v[0] = 0;
+			fv->v[1] = 0;
+			fv->v[2] = pstverts->s;
+			fv->v[3] = pstverts->t;
+			fv->flags = pstverts->onseam | ALIAS_Z_CLIP;
+			fv->v[4] = r_ambientlight;
+			continue;
+		}
+		zi = 1.0 / zdenom;
 
 	// x, y, and z are scaled down by 1/2**31 in the transform, so 1/z is
 	// scaled up by 1/2**31, and the scaling cancels out for x and y in the
 	// projection
-		fv->v[5] = zi;
+		fv->v[5] = zi * ziscale;
 
 		fv->v[0] = ((DotProduct(pverts->v, aliastransform[0]) +
 				aliastransform[0][3]) * zi) + aliasxcenter;
@@ -727,11 +739,11 @@ void R_AliasDrawModel (alight_t *plighting)
 	r_affinetridesc.drawtype = (currententity->trivial_accept == 3) &&
 			r_recursiveaffinetriangles;
 
-	if (r_affinetridesc.drawtype)
-	{
-		D_PolysetUpdateTables ();		// FIXME: precalc...
-	}
-	else
+	// C polyset rasterization uses global skinstart/skinwidth tables.
+	// Keep them synced for both recursive and non-recursive alias paths.
+	D_PolysetUpdateTables ();		// FIXME: precalc...
+
+	if (!r_affinetridesc.drawtype)
 	{
 #if	id386
 		D_Aff8Patch (currententity->colormap);

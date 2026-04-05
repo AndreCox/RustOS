@@ -876,7 +876,8 @@ char *ED_ParseEdict (char *data, edict_t *ent)
 		if (!strcmp(com_token, "light"))
 			strcpy (com_token, "light_lev");	// hack for single light def
 
-		strcpy (keyname, com_token);
+		strncpy (keyname, com_token, sizeof(keyname) - 1);
+		keyname[sizeof(keyname) - 1] = 0;
 
 		// another hack to fix keynames with trailing spaces
 		n = strlen(keyname);
@@ -911,7 +912,8 @@ char *ED_ParseEdict (char *data, edict_t *ent)
 		if (anglehack)
 		{
 			char	temp[32];
-			strcpy (temp, com_token);
+			strncpy (temp, com_token, sizeof(temp) - 1);
+			temp[sizeof(temp) - 1] = 0;
 			sprintf (com_token, "0 %s 0", temp);
 		}
 

@@ -314,7 +314,7 @@ void main (int argc, char **argv)
 	static quakeparms_t    parms;
 	double oldtime;
 
-	parms.memsize = 8*1024*1024;
+	parms.memsize = 32*1024*1024;
 	parms.membase = malloc (parms.memsize);
 	parms.basedir = ".";
 

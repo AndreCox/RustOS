@@ -606,6 +606,31 @@ void SV_CheckStuck (edict_t *ent)
 	int		i, j;
 	int		z;
 	vec3_t	org;
+	long	ent_off;
+	int	ent_idx;
+
+	if (!sv.edicts || pr_edict_size <= 0)
+	{
+		Sys_Printf("[quake-debug] SV_CheckStuck: invalid edict table (edicts=%p pr_edict_size=%i)\n",
+			sv.edicts, pr_edict_size);
+		return;
+	}
+
+	ent_off = (byte *)ent - (byte *)sv.edicts;
+	if (ent_off < 0 || (ent_off % pr_edict_size) != 0)
+	{
+		Sys_Printf("[quake-debug] SV_CheckStuck: misaligned ent pointer %p (base=%p size=%i)\n",
+			ent, sv.edicts, pr_edict_size);
+		return;
+	}
+
+	ent_idx = (int)(ent_off / pr_edict_size);
+	if (ent_idx < 0 || ent_idx >= sv.num_edicts)
+	{
+		Sys_Printf("[quake-debug] SV_CheckStuck: out-of-range ent idx=%i num_edicts=%i ent=%p base=%p\n",
+			ent_idx, sv.num_edicts, ent, sv.edicts);
+		return;
+	}
 
 	if (!SV_TestEntityPosition(ent))
 	{
@@ -915,6 +940,8 @@ void SV_Physics_Client (edict_t	*ent, int num)
 
 	case MOVETYPE_TOSS:
 	case MOVETYPE_BOUNCE:
+	case 11: // MOVETYPE_BOUNCEMISSILE
+	case 12: // MOVETYPE_FOLLOW
 		SV_Physics_Toss (ent);
 		break;
 
@@ -1334,7 +1361,9 @@ void SV_Physics (void)
 		else if (ent->v.movetype == MOVETYPE_TOSS
 		|| ent->v.movetype == MOVETYPE_BOUNCE
 		|| ent->v.movetype == MOVETYPE_FLY
-		|| ent->v.movetype == MOVETYPE_FLYMISSILE)
+		|| ent->v.movetype == MOVETYPE_FLYMISSILE
+		|| ent->v.movetype == 11 // MOVETYPE_BOUNCEMISSILE
+		|| ent->v.movetype == 12) // MOVETYPE_FOLLOW
 			SV_Physics_Toss (ent);
 		else
 			Sys_Error ("SV_Physics: bad movetype %i", (int)ent->v.movetype);

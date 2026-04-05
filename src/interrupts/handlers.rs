@@ -97,10 +97,44 @@ pub extern "C" fn exception_handler(frame: &InterruptStackFrame) -> u64 {
         );
         crate::println!("RSP: {:#x} RFLAGS: {:#x}", frame.rsp, frame.rflags);
         crate::println!("CS:  {:#x} SS:     {:#x}", frame.cs, frame.ss);
+        crate::println!(
+            "[EXC DEBUG] CR2-RDI delta: {:#x}",
+            cr2.wrapping_sub(frame.rdi)
+        );
 
         if let Some(mut guard) = crate::multitasker::scheduler::SCHEDULER.try_lock() {
             if let Some(sched) = guard.as_mut() {
                 if let Some(task) = sched.current_task.as_mut() {
+                    crate::println!(
+                        "[EXC DEBUG] task id={} status={:?} stack_ptr={:#x}",
+                        task.id,
+                        task.status,
+                        task.stack_pointer
+                    );
+
+                    if let Some(img) = task.owned_program_image.as_ref() {
+                        let img_base = img.as_ptr() as u64;
+                        let img_end = img_base.saturating_add(img.len() as u64);
+                        let rip_off = frame.rip.wrapping_sub(img_base);
+                        let cr2_off = cr2.wrapping_sub(img_base);
+                        let rip_in = frame.rip >= img_base && frame.rip < img_end;
+                        let cr2_in = cr2 >= img_base && cr2 < img_end;
+
+                        crate::println!(
+                            "[EXC DEBUG] task image base={:#x} end={:#x} len={}",
+                            img_base,
+                            img_end,
+                            img.len()
+                        );
+                        crate::println!(
+                            "[EXC DEBUG] rip_off={:#x} (in_image={}) cr2_off={:#x} (in_image={})",
+                            rip_off,
+                            rip_in,
+                            cr2_off,
+                            cr2_in
+                        );
+                    }
+
                     if crate::io::keyboard::task_has_focus(task.id) {
                         crate::io::keyboard::set_focus_and_clear(
                             crate::io::keyboard::SHELL_TASK_ID,

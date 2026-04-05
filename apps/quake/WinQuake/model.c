@@ -662,8 +662,13 @@ void Mod_LoadTexinfo (lump_t *l)
 
 	for ( i=0 ; i<count ; i++, in++, out++)
 	{
-		for (j=0 ; j<8 ; j++)
-			out->vecs[0][j] = LittleFloat (in->vecs[0][j]);
+		for (j=0 ; j<2 ; j++)
+		{
+			out->vecs[j][0] = LittleFloat (in->vecs[j][0]);
+			out->vecs[j][1] = LittleFloat (in->vecs[j][1]);
+			out->vecs[j][2] = LittleFloat (in->vecs[j][2]);
+			out->vecs[j][3] = LittleFloat (in->vecs[j][3]);
+		}
 		len1 = Length (out->vecs[0]);
 		len2 = Length (out->vecs[1]);
 		len1 = (len1 + len2)/2;
@@ -711,10 +716,14 @@ CalcSurfaceExtents
 Fills in s->texturemins[] and s->extents[]
 ================
 */
+static int g_debug_surfnum = -1;
+static int g_zero_extent_logs = 0;
+
 void CalcSurfaceExtents (msurface_t *s)
 {
 	float	mins[2], maxs[2], val;
 	int		i,j, e;
+	int		valid_verts;
 	mvertex_t	*v;
 	mtexinfo_t	*tex;
 	int		bmins[2], bmaxs[2];
@@ -723,14 +732,48 @@ void CalcSurfaceExtents (msurface_t *s)
 	maxs[0] = maxs[1] = -99999;
 
 	tex = s->texinfo;
+	valid_verts = 0;
+
+	if (s->firstedge < 0 || s->numedges < 0 ||
+		s->firstedge > loadmodel->numsurfedges ||
+		s->numedges > (loadmodel->numsurfedges - s->firstedge))
+	{
+		Sys_Printf("[quake-debug] invalid surface edge range model=%s surf=%i firstedge=%i numedges=%i numsurfedges=%i\n",
+			loadmodel ? loadmodel->name : "<null>", g_debug_surfnum,
+			(int)s->firstedge, (int)s->numedges, (int)loadmodel->numsurfedges);
+		s->texturemins[0] = s->texturemins[1] = 0;
+		s->extents[0] = s->extents[1] = 16;
+		return;
+	}
 	
 	for (i=0 ; i<s->numedges ; i++)
 	{
 		e = loadmodel->surfedges[s->firstedge+i];
-		if (e >= 0)
-			v = &loadmodel->vertexes[loadmodel->edges[e].v[0]];
-		else
-			v = &loadmodel->vertexes[loadmodel->edges[-e].v[1]];
+		{
+			int edge_index = (e >= 0) ? e : -e;
+			int vert_index;
+
+			if (edge_index < 0 || edge_index >= loadmodel->numedges)
+			{
+				Sys_Printf("[quake-debug] invalid surfedge model=%s surf=%i i=%i surfedge=%i numedges=%i\n",
+					loadmodel ? loadmodel->name : "<null>", g_debug_surfnum, i, e, loadmodel->numedges);
+				continue;
+			}
+
+			vert_index = (e >= 0)
+				? (int)loadmodel->edges[edge_index].v[0]
+				: (int)loadmodel->edges[edge_index].v[1];
+
+			if (vert_index < 0 || vert_index >= loadmodel->numvertexes)
+			{
+				Sys_Printf("[quake-debug] invalid vertex index model=%s surf=%i i=%i vert=%i numvertexes=%i\n",
+					loadmodel ? loadmodel->name : "<null>", g_debug_surfnum, i, vert_index, loadmodel->numvertexes);
+				continue;
+			}
+
+			v = &loadmodel->vertexes[vert_index];
+			valid_verts++;
+		}
 		
 		for (j=0 ; j<2 ; j++)
 		{
@@ -738,6 +781,12 @@ void CalcSurfaceExtents (msurface_t *s)
 				v->position[1] * tex->vecs[j][1] +
 				v->position[2] * tex->vecs[j][2] +
 				tex->vecs[j][3];
+			if (IS_NAN(val))
+			{
+				Sys_Printf("[quake-debug] NaN tex projection model=%s surf=%i i=%i axis=%i\n",
+					loadmodel ? loadmodel->name : "<null>", g_debug_surfnum, i, j);
+				continue;
+			}
 			if (val < mins[j])
 				mins[j] = val;
 			if (val > maxs[j])
@@ -745,15 +794,71 @@ void CalcSurfaceExtents (msurface_t *s)
 		}
 	}
 
+	if (valid_verts == 0)
+	{
+		Sys_Printf("[quake-debug] no valid verts for surface model=%s surf=%i\n",
+			loadmodel ? loadmodel->name : "<null>", g_debug_surfnum);
+		s->texturemins[0] = s->texturemins[1] = 0;
+		s->extents[0] = s->extents[1] = 16;
+		return;
+	}
+
 	for (i=0 ; i<2 ; i++)
 	{	
-		bmins[i] = floor(mins[i]/16);
-		bmaxs[i] = ceil(maxs[i]/16);
+		double fl_arg = (double)(mins[i]/16.0f);
+		double cl_arg = (double)(maxs[i]/16.0f);
+		double fl_res = floor(fl_arg);
+		double cl_res = ceil(cl_arg);
+		bmins[i] = (int)fl_res;
+		bmaxs[i] = (int)cl_res;
+
+		if (g_zero_extent_logs < 5)
+		{
+			Sys_Printf("[quake-debug] CalcExt axis=%i mins=%d maxs=%d fl_arg=%d cl_arg=%d fl_res=%d cl_res=%d bmins=%d bmaxs=%d\n",
+				i, (int)mins[i], (int)maxs[i], (int)fl_arg, (int)cl_arg, (int)fl_res, (int)cl_res, bmins[i], bmaxs[i]);
+		}
 
 		s->texturemins[i] = bmins[i] * 16;
 		s->extents[i] = (bmaxs[i] - bmins[i]) * 16;
-		if ( !(tex->flags & TEX_SPECIAL) && s->extents[i] > 256)
-			Sys_Error ("Bad surface extents");
+		if ( !(tex->flags & TEX_SPECIAL) && (s->extents[i] > 256 || s->extents[i] < 0))
+		{
+			const char *texname = (tex && tex->texture) ? tex->texture->name : "<null>";
+			Sys_Printf("[quake-debug] Bad surface extents detected\n");
+			Sys_Printf("[quake-debug] model=%s surf=%i axis=%i numedges=%i firstedge=%i\n",
+				loadmodel ? loadmodel->name : "<null>", g_debug_surfnum, i, (int)s->numedges, (int)s->firstedge);
+			Sys_Printf("[quake-debug] mins=(%i,%i) maxs=(%i,%i)\n",
+				(int)mins[0], (int)mins[1], (int)maxs[0], (int)maxs[1]);
+			Sys_Printf("[quake-debug] bmins=(%i,%i) bmaxs=(%i,%i) texmins=(%i,%i) extents=(%i,%i)\n",
+				bmins[0], bmins[1], bmaxs[0], bmaxs[1],
+				(int)s->texturemins[0], (int)s->texturemins[1], (int)s->extents[0], (int)s->extents[1]);
+			Sys_Printf("[quake-debug] texflags=%i tex=%s\n", (int)tex->flags, texname);
+			if (s->extents[i] < 0)
+				s->extents[i] = 0;
+			if (s->extents[i] > 256)
+				s->extents[i] = 256;
+			Sys_Printf("[quake-debug] clamped extents axis=%i now=%i\n", i, (int)s->extents[i]);
+		}
+
+		if (!(tex->flags & TEX_SPECIAL) && s->extents[i] == 0)
+		{
+			if (g_zero_extent_logs < 200)
+			{
+				const char *texname = (tex && tex->texture) ? tex->texture->name : "<null>";
+				Sys_Printf("[quake-debug] zero surface extent\n");
+				Sys_Printf("[quake-debug] model=%s surf=%i axis=%i numedges=%i firstedge=%i\n",
+					loadmodel ? loadmodel->name : "<null>", g_debug_surfnum, i,
+					(int)s->numedges, (int)s->firstedge);
+				Sys_Printf("[quake-debug] mins=(%i,%i) maxs=(%i,%i) bmins=(%i,%i) bmaxs=(%i,%i)\n",
+					(int)mins[0], (int)mins[1], (int)maxs[0], (int)maxs[1],
+					bmins[0], bmins[1], bmaxs[0], bmaxs[1]);
+				Sys_Printf("[quake-debug] tex=%s texflags=%i texmins=(%i,%i)\n",
+					texname, (int)tex->flags,
+					(int)s->texturemins[0], (int)s->texturemins[1]);
+				g_zero_extent_logs++;
+				if (g_zero_extent_logs == 200)
+					Sys_Printf("[quake-debug] zero surface extent log limit reached\n");
+			}
+		}
 	}
 }
 
@@ -781,19 +886,42 @@ void Mod_LoadFaces (lump_t *l)
 
 	for ( surfnum=0 ; surfnum<count ; surfnum++, in++, out++)
 	{
+		int texinfo_index;
+
 		out->firstedge = LittleLong(in->firstedge);
 		out->numedges = LittleShort(in->numedges);		
 		out->flags = 0;
 
 		planenum = LittleShort(in->planenum);
+		if (planenum < 0 || planenum >= loadmodel->numplanes)
+		{
+			Sys_Printf("[quake-debug] invalid face plane model=%s surf=%i planenum=%i numplanes=%i\n",
+				loadmodel ? loadmodel->name : "<null>", surfnum, planenum, loadmodel->numplanes);
+			out->firstedge = 0;
+			out->numedges = 0;
+			out->samples = NULL;
+			continue;
+		}
+
 		side = LittleShort(in->side);
 		if (side)
 			out->flags |= SURF_PLANEBACK;			
 
 		out->plane = loadmodel->planes + planenum;
 
-		out->texinfo = loadmodel->texinfo + LittleShort (in->texinfo);
+		texinfo_index = LittleShort (in->texinfo);
+		if (texinfo_index < 0 || texinfo_index >= loadmodel->numtexinfo)
+		{
+			Sys_Printf("[quake-debug] invalid face texinfo model=%s surf=%i texinfo=%i numtexinfo=%i\n",
+				loadmodel ? loadmodel->name : "<null>", surfnum, texinfo_index, loadmodel->numtexinfo);
+			out->firstedge = 0;
+			out->numedges = 0;
+			out->samples = NULL;
+			continue;
+		}
+		out->texinfo = loadmodel->texinfo + texinfo_index;
 
+		g_debug_surfnum = surfnum;
 		CalcSurfaceExtents (out);
 				
 	// lighting info
