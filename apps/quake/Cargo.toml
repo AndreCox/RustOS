@@ -1,0 +1,24 @@
+[package]
+name = "quake"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "quake"
+path = "src/main.rs"
+test = false
+bench = false
+
+[build-dependencies]
+cc = { version = "1.0", default-features = false }
+
+[dependencies]
+rustos_user = { path = "../../libs/rustos_user" }
+
+[profile.dev]
+panic = "abort"
+opt-level = 0
+
+[profile.release]
+panic = "abort"
+opt-level = 3

@@ -1,0 +1,98 @@
+fn main() {
+    const C_SOURCES: &[&str] = &[
+        "WinQuake/chase.c",
+        "WinQuake/cl_demo.c",
+        "WinQuake/cl_input.c",
+        "WinQuake/cl_main.c",
+        "WinQuake/cl_parse.c",
+        "WinQuake/cl_tent.c",
+        "WinQuake/cmd.c",
+        "WinQuake/common.c",
+        "WinQuake/console.c",
+        "WinQuake/crc.c",
+        "WinQuake/cvar.c",
+        "WinQuake/d_edge.c",
+        "WinQuake/d_fill.c",
+        "WinQuake/d_init.c",
+        "WinQuake/d_modech.c",
+        "WinQuake/d_part.c",
+        "WinQuake/d_polyse.c",
+        "WinQuake/d_scan.c",
+        "WinQuake/d_sky.c",
+        "WinQuake/d_sprite.c",
+        "WinQuake/d_surf.c",
+        "WinQuake/d_zpoint.c",
+        "WinQuake/d_vars.c",
+        "WinQuake/draw.c",
+        "WinQuake/host.c",
+        "WinQuake/host_cmd.c",
+        "WinQuake/keys.c",
+        "WinQuake/mathlib.c",
+        "WinQuake/menu.c",
+        "WinQuake/model.c",
+        "WinQuake/net_bsd.c",
+        "WinQuake/net_dgrm.c",
+        "WinQuake/net_loop.c",
+        "WinQuake/net_main.c",
+        "WinQuake/net_udp.c",
+        "WinQuake/net_vcr.c",
+        "WinQuake/net_wso.c",
+        "WinQuake/nonintel.c",
+        "WinQuake/pr_cmds.c",
+        "WinQuake/pr_edict.c",
+        "WinQuake/pr_exec.c",
+        "WinQuake/r_aclip.c",
+        "WinQuake/r_alias.c",
+        "WinQuake/r_bsp.c",
+        "WinQuake/r_draw.c",
+        "WinQuake/r_edge.c",
+        "WinQuake/r_efrag.c",
+        "WinQuake/r_light.c",
+        "WinQuake/r_main.c",
+        "WinQuake/r_misc.c",
+        "WinQuake/r_part.c",
+        "WinQuake/r_sky.c",
+        "WinQuake/r_sprite.c",
+        "WinQuake/r_surf.c",
+        "WinQuake/r_vars.c",
+        "WinQuake/sbar.c",
+        "WinQuake/screen.c",
+        "WinQuake/snd_dma.c",
+        "WinQuake/snd_mem.c",
+        "WinQuake/snd_mix.c",
+        "WinQuake/snd_null.c",
+        "WinQuake/sv_main.c",
+        "WinQuake/sv_move.c",
+        "WinQuake/sv_phys.c",
+        "WinQuake/sv_user.c",
+        "WinQuake/sys_null.c",
+        "WinQuake/view.c",
+        "WinQuake/wad.c",
+        "WinQuake/world.c",
+        "WinQuake/zone.c",
+        "WinQuake/cd_null.c",
+        "WinQuake/in_null.c",
+        "WinQuake/net_none.c",
+        "WinQuake/vid_null.c",
+    ];
+
+    let mut build = cc::Build::new();
+    build
+        .include("WinQuake")
+        .define("BUILD_NULL", None)
+        .warnings(false)
+        .flag("-std=c11")
+        .flag_if_supported("-ffreestanding")
+        .flag_if_supported("-fno-builtin")
+        .flag_if_supported("-fomit-frame-pointer")
+        .flag_if_supported("-mno-red-zone")
+        .opt_level(2);
+
+    for source in C_SOURCES {
+        println!("cargo:rerun-if-changed={source}");
+        build.file(source);
+    }
+
+    println!("cargo:rerun-if-changed=build.rs");
+    build.compile("winquake_c");
+}

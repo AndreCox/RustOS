@@ -37,10 +37,11 @@ pub extern "C" fn syscall_handler(frame: &mut InterruptStackFrame) -> u64 {
             }
         }
         3 => {
+            // Clear screen
             let q = &crate::io::log_buffer::DISPLAY_QUEUE;
-            q.push_char(0x1B);
-            q.push_char(b'[');
-            q.push_char(b'J');
+            q.push_char(0x1B); // ESC
+            q.push_char(b'['); // CSI
+            q.push_char(b'J'); // Clear to end of screen
         }
         4 => {
             let x = arg1 & 0xFFFF;

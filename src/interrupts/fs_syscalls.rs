@@ -1,9 +1,18 @@
+/*********************************************************************************************************************************************************************************************************************************************************************************************
+ *                                                                                                                                       DOCUMENTATION                                                                                                                                       *
+ *                                                                                                                                     SYSCALL MODULES,                                                                                                                                      *
+ *                                                                                                             THESE FUNCTIONS ARE BASICALLY INTERUPT HANDLERS FOR THE SYSCALLS.                                                                                                             *
+ *                                                                                                  WHEN A PROGRAM IN USERSPACE EXECUTES THE SYSCALL INSTRUCTION, IT TRIGGERS AN INTERRUPT.                                                                                                  *
+ * IT WILL THEN RUN THE CORRESPONDING HANDLER IN THIS MODULE, WHICH WILL READ THE SYSCALL NUMBER AND ARGUMENTS FROM THE REGISTERS, PERFORM THE REQUESTED OPERATION (LIKE READING A FILE, WRITING TO A FILE, ETC), AND THEN RETURN THE RESULT BACK TO THE USER PROGRAM THROUGH THE REGISTERS. *
+ *********************************************************************************************************************************************************************************************************************************************************************************************/
+
 use alloc::{string::String, vec::Vec};
 
 const SYSCALL_ERR: u64 = u64::MAX;
 const MAX_SYSCALL_PATH: usize = 512;
 const MAX_SYSCALL_RW: usize = 1024 * 1024;
 
+// Just reads in a cstring and converts it to a rust string.
 unsafe fn user_cstr_to_string(ptr: u64, max_len: usize) -> Option<String> {
     if ptr == 0 || max_len == 0 {
         return None;
@@ -27,6 +36,7 @@ unsafe fn user_cstr_to_string(ptr: u64, max_len: usize) -> Option<String> {
     Some(s.into())
 }
 
+// handler to nomalize paths, mostly to handle things like "./././file.txt"
 fn normalize_fs_path(path: &str) -> String {
     let bytes = path.as_bytes();
     let mut i = 0usize;
@@ -65,6 +75,7 @@ fn normalize_fs_path(path: &str) -> String {
     normalized
 }
 
+// read from the file system into userspace
 pub(super) unsafe fn sys_fs_read(path_ptr: u64, buf_ptr: u64, len: u64) -> u64 {
     if buf_ptr == 0 || len == 0 {
         return 0;
@@ -94,6 +105,7 @@ pub(super) unsafe fn sys_fs_read(path_ptr: u64, buf_ptr: u64, len: u64) -> u64 {
     }
 }
 
+// open a file and return a handle to it
 pub(super) unsafe fn sys_fs_open(path_ptr: u64) -> u64 {
     let path = match user_cstr_to_string(path_ptr, MAX_SYSCALL_PATH) {
         Some(p) => normalize_fs_path(&p),
@@ -122,6 +134,7 @@ pub(super) unsafe fn sys_fs_open(path_ptr: u64) -> u64 {
     (open_files.len() - 1) as u64
 }
 
+// read from an already opened file handle into userspace
 pub(super) unsafe fn sys_fs_read_handle(handle: u64, buf_ptr: u64, len: u64) -> u64 {
     let props = {
         let open_files = crate::fs::OPEN_FILES.lock();
@@ -152,6 +165,7 @@ pub(super) unsafe fn sys_fs_read_handle(handle: u64, buf_ptr: u64, len: u64) -> 
     bytes_read
 }
 
+// seek within an already opened file handle, returns new position
 pub(super) unsafe fn sys_fs_seek_handle(handle: u64, offset: u64, whence: u64) -> u64 {
     let props = {
         let open_files = crate::fs::OPEN_FILES.lock();
@@ -188,6 +202,7 @@ pub(super) unsafe fn sys_fs_seek_handle(handle: u64, offset: u64, whence: u64) -
     new_pos
 }
 
+// close an already opened file handle
 pub(super) unsafe fn sys_fs_close(handle: u64) {
     let mut open_files = crate::fs::OPEN_FILES.lock();
     if let Some(slot) = open_files.get_mut(handle as usize) {
@@ -195,6 +210,7 @@ pub(super) unsafe fn sys_fs_close(handle: u64) {
     }
 }
 
+// create a new directory at the given path, returns 0 on success, or SYSCALL_ERR on failure.
 pub(super) unsafe fn sys_fs_mkdir(path_ptr: u64) -> u64 {
     let path = match unsafe { user_cstr_to_string(path_ptr, MAX_SYSCALL_PATH) } {
         Some(p) => normalize_fs_path(&p),
@@ -217,6 +233,7 @@ pub(super) unsafe fn sys_fs_mkdir(path_ptr: u64) -> u64 {
     }
 }
 
+// remove a file or directory at the given path, returns 0 on success, or SYSCALL_ERR on failure.
 pub(super) unsafe fn sys_fs_remove(path_ptr: u64) -> u64 {
     let path = match unsafe { user_cstr_to_string(path_ptr, MAX_SYSCALL_PATH) } {
         Some(p) => normalize_fs_path(&p),
@@ -235,6 +252,7 @@ pub(super) unsafe fn sys_fs_remove(path_ptr: u64) -> u64 {
     }
 }
 
+// allows renaming/moving a file or directory from one path to another, returns 0 on success, or SYSCALL_ERR on failure.
 pub(super) unsafe fn sys_fs_rename(from_ptr: u64, to_ptr: u64) -> u64 {
     let from = match unsafe { user_cstr_to_string(from_ptr, MAX_SYSCALL_PATH) } {
         Some(p) => normalize_fs_path(&p),
@@ -257,6 +275,7 @@ pub(super) unsafe fn sys_fs_rename(from_ptr: u64, to_ptr: u64) -> u64 {
     }
 }
 
+// write to the file system from userspace, creating the file if it doesn't exist. Returns number of bytes written, or SYSCALL_ERR on failure.
 pub(super) unsafe fn sys_fs_write(path_ptr: u64, buf_ptr: u64, len: u64) -> u64 {
     if buf_ptr == 0 || len == 0 {
         return 0;

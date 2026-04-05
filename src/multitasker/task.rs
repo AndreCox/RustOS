@@ -9,6 +9,7 @@
 use crate::{
     alloc::alloc::{Layout, alloc, dealloc},
     alloc::boxed::Box,
+    alloc::vec::Vec,
 };
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
@@ -46,7 +47,7 @@ pub struct Task {
     pub status: TaskStatus,
     pub stack_base: u64, // The base of the allocated stack, used for deallocation.
     pub stack_size: usize, // The size of the allocated stack, used for deallocation.
-    pub owned_program_image: Option<Box<[u8]>>, // User program image kept alive for the task lifetime.
+    pub owned_program_image: Option<Vec<u8>>, // Keep original ELF allocation to preserve alignment.
     pub owned_arg_bytes: Option<Box<[u8]>>, // NUL-terminated argument bytes kept alive for task lifetime.
 }
 
@@ -128,7 +129,7 @@ impl Task {
     // This function allows us to attach owned memory (like the program image and argument bytes) to the task, ensuring that they will be kept alive for the lifetime of the task and automatically deallocated when the task is dropped. This is crucial for preventing memory leaks when tasks exit or are killed.
     pub fn with_owned_memory(
         mut self,
-        owned_program_image: Option<Box<[u8]>>,
+        owned_program_image: Option<Vec<u8>>,
         owned_arg_bytes: Option<Box<[u8]>>,
     ) -> Self {
         self.owned_program_image = owned_program_image;

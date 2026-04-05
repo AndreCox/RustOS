@@ -1,3 +1,10 @@
+/****************************************************************************************************************************************************************************************
+ *                                                                                    DOCUMENTATION                                                                                     *
+ *                                                  THIS MODULE CONTAINS THE ASSEMBLY STUBS FOR OUR INTERRUPT SERVICE ROUTINES (ISRS).                                                  *
+ *                                           THESE STUBS ARE THE LOW-LEVEL ENTRY POINTS FOR HANDLING CPU EXCEPTIONS AND HARDWARE INTERRUPTS.                                            *
+ * EACH STUB IS RESPONSIBLE FOR SAVING THE CPU STATE, CALLING THE APPROPRIATE RUST HANDLER FUNCTION, AND THEN RESTORING THE CPU STATE BEFORE RETURNING CONTROL TO THE INTERRUPTED CODE. *
+ ****************************************************************************************************************************************************************************************/
+
 use core::arch::global_asm;
 
 unsafe extern "C" {

@@ -1,3 +1,4 @@
 {
-  "editor.cursorBlinking": "smooth"
+  "editor.cursorBlinking": "smooth",
+  "cmake.sourceDirectory": "/home/andre/dev/source/RustOS/apps/quake/WinQuake"
 }

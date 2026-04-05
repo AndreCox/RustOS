@@ -1,4 +1,4 @@
-use crate::alloc::{boxed::Box, vec::Vec};
+use crate::alloc::vec::Vec;
 use crate::fs;
 use crate::multitasker::scheduler::SCHEDULER;
 use crate::multitasker::task::Task;
@@ -376,8 +376,7 @@ pub fn launch_program(filename: &str, arg: Option<&str>) -> Result<u64, &'static
     })?;
 
     let (program_image, entry_offset) = load_elf_image(&file_content)?;
-    let program_image_box: Box<[u8]> = program_image.into_boxed_slice();
-    let entry_point = program_image_box.as_ptr() as u64 + entry_offset;
+    let entry_point = program_image.as_ptr() as u64 + entry_offset;
     crate::serial_println!("launch_program: allocated memory at {:#x}", entry_point);
 
     let arg_box = arg.map(|a| {
@@ -399,7 +398,7 @@ pub fn launch_program(filename: &str, arg: Option<&str>) -> Result<u64, &'static
     };
 
     let new_task = Task::new(task_id, entry_point, arg_ptr, None)
-        .with_owned_memory(Some(program_image_box), arg_box);
+        .with_owned_memory(Some(program_image), arg_box);
     crate::serial_println!("launch_program: created task");
 
     crate::multitasker::scheduler::with_scheduler(|scheduler_slot| {
