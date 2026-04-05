@@ -71,7 +71,10 @@ pub extern "C" fn syscall_handler(frame: &mut InterruptStackFrame) -> u64 {
                         .and_then(|sched| sched.current_task.as_ref().map(|task| task.id))
                 });
 
-            frame.rax = if current_task == Some(focused) {
+            // If we can't observe current_task due lock contention, don't drop input on the floor.
+            let allow_input = current_task.map(|id| id == focused).unwrap_or(true);
+
+            frame.rax = if allow_input {
                 SCANCODE_QUEUE.pop().map(|s| s as u64).unwrap_or(0)
             } else {
                 0
@@ -93,7 +96,10 @@ pub extern "C" fn syscall_handler(frame: &mut InterruptStackFrame) -> u64 {
                         .and_then(|sched| sched.current_task.as_ref().map(|task| task.id))
                 });
 
-            frame.rax = if current_task == Some(focused) {
+            // Same reasoning as syscall 7: transient lock contention should not starve input.
+            let allow_input = current_task.map(|id| id == focused).unwrap_or(true);
+
+            frame.rax = if allow_input {
                 SCANCODE_QUEUE
                     .pop()
                     .and_then(|s| crate::io::keyboard::scancode_to_byte(s))

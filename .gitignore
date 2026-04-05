@@ -6,3 +6,4 @@ RustOS.iso
 *.WAD
 *.wad
 *.img
+/assets/data/id1/

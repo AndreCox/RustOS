@@ -6,7 +6,7 @@
  * IT WILL THEN RUN THE CORRESPONDING HANDLER IN THIS MODULE, WHICH WILL READ THE SYSCALL NUMBER AND ARGUMENTS FROM THE REGISTERS, PERFORM THE REQUESTED OPERATION (LIKE READING A FILE, WRITING TO A FILE, ETC), AND THEN RETURN THE RESULT BACK TO THE USER PROGRAM THROUGH THE REGISTERS. *
  *********************************************************************************************************************************************************************************************************************************************************************************************/
 
-use alloc::{string::String, vec::Vec};
+use alloc::{format, string::String, vec::Vec};
 
 const SYSCALL_ERR: u64 = u64::MAX;
 const MAX_SYSCALL_PATH: usize = 512;
@@ -75,6 +75,70 @@ fn normalize_fs_path(path: &str) -> String {
     normalized
 }
 
+fn ascii_upper_path(path: &str) -> String {
+    let mut out = String::with_capacity(path.len());
+    for b in path.bytes() {
+        let u = if b.is_ascii_lowercase() { b - 32 } else { b };
+        out.push(u as char);
+    }
+    out
+}
+
+fn to_windows_style_path(path: &str) -> String {
+    let mut out = String::with_capacity(path.len().saturating_add(1));
+    let mut has_leading_sep = false;
+
+    for (idx, b) in path.bytes().enumerate() {
+        if idx == 0 && (b == b'/' || b == b'\\') {
+            has_leading_sep = true;
+        }
+        out.push(if b == b'/' { '\\' } else { b as char });
+    }
+
+    if !has_leading_sep {
+        let mut rooted = String::from("\\");
+        rooted.push_str(out.as_str());
+        rooted
+    } else {
+        out
+    }
+}
+
+fn normalize_compare_path(path: &str) -> String {
+    let mut out = String::with_capacity(path.len().saturating_add(1));
+    if !path.starts_with('/') && !path.starts_with('\\') {
+        out.push('/');
+    }
+    for b in path.bytes() {
+        let c = if b == b'\\' { b'/' } else { b };
+        let c = if c.is_ascii_lowercase() { c - 32 } else { c };
+        out.push(c as char);
+    }
+    while out.len() > 1 && out.as_bytes()[out.len() - 1] == b'/' {
+        out.pop();
+    }
+    out
+}
+
+fn normalize_compare_path_dotless(path: &str) -> String {
+    let mut out = String::with_capacity(path.len().saturating_add(1));
+    if !path.starts_with('/') && !path.starts_with('\\') {
+        out.push('/');
+    }
+    for b in path.bytes() {
+        if b == b'.' {
+            continue;
+        }
+        let c = if b == b'\\' { b'/' } else { b };
+        let c = if c.is_ascii_lowercase() { c - 32 } else { c };
+        out.push(c as char);
+    }
+    while out.len() > 1 && out.as_bytes()[out.len() - 1] == b'/' {
+        out.pop();
+    }
+    out
+}
+
 // read from the file system into userspace
 pub(super) unsafe fn sys_fs_read(path_ptr: u64, buf_ptr: u64, len: u64) -> u64 {
     if buf_ptr == 0 || len == 0 {
@@ -118,9 +182,108 @@ pub(super) unsafe fn sys_fs_open(path_ptr: u64) -> u64 {
         None => return SYSCALL_ERR,
     };
 
-    let file = match fs.get_ro_file(path.as_str()) {
-        Ok(f) => f,
-        Err(_) => return SYSCALL_ERR,
+    let mut candidates: Vec<String> = Vec::new();
+    candidates.push(path.clone());
+
+    if path.starts_with('/') && path.len() > 1 {
+        candidates.push(path[1..].into());
+    } else if !path.starts_with('/') {
+        let mut abs = String::from("/");
+        abs.push_str(path.as_str());
+        candidates.push(abs);
+    }
+
+    let base_count = candidates.len();
+    for i in 0..base_count {
+        let upper = ascii_upper_path(candidates[i].as_str());
+        if upper != candidates[i] {
+            candidates.push(upper);
+        }
+    }
+
+    // simple-fatfs uses Utf8WindowsPath internally, so provide windows-style variants too.
+    let style_count = candidates.len();
+    for i in 0..style_count {
+        let win = to_windows_style_path(candidates[i].as_str());
+        if !candidates.iter().any(|c| c == &win) {
+            candidates.push(win);
+        }
+    }
+
+    let mut file_opt = None;
+    for candidate in candidates.iter() {
+        if let Ok(f) = fs.get_ro_file(candidate.as_str()) {
+            file_opt = Some(f);
+            break;
+        }
+    }
+
+    let file = if let Some(file) = file_opt {
+        file
+    } else {
+        let target = normalize_compare_path(path.as_str());
+        let target_dotless = normalize_compare_path_dotless(path.as_str());
+        let mut dirs = Vec::new();
+        let mut seen_dirs = Vec::new();
+        dirs.push(String::from("/"));
+        dirs.push(String::from("\\"));
+        dirs.push(String::from(""));
+        let mut resolved = None;
+
+        while let Some(dir) = dirs.pop() {
+            if seen_dirs.iter().any(|d| d == &dir) {
+                continue;
+            }
+            seen_dirs.push(dir.clone());
+
+            let iter = match fs.read_dir(dir.as_str()) {
+                Ok(i) => i,
+                Err(_) => continue,
+            };
+
+            for entry_result in iter {
+                let entry = match entry_result {
+                    Ok(e) => e,
+                    Err(_) => continue,
+                };
+
+                let entry_path = format!("{}", entry.path());
+                let entry_norm = normalize_compare_path(entry_path.as_str());
+                let entry_norm_dotless = normalize_compare_path_dotless(entry_path.as_str());
+
+                if entry.is_file() && (entry_norm == target || entry_norm_dotless == target_dotless)
+                {
+                    resolved = Some(entry_path);
+                    break;
+                }
+
+                if entry.is_dir() {
+                    dirs.push(entry_path.clone());
+                    let mut alt = String::new();
+                    for b in entry_path.bytes() {
+                        alt.push(if b == b'\\' { '/' } else { b as char });
+                    }
+                    if !alt.is_empty() {
+                        dirs.push(alt);
+                    }
+                }
+            }
+
+            if resolved.is_some() {
+                break;
+            }
+        }
+
+        if let Some(real_path) = resolved {
+            match fs.get_ro_file(real_path.as_str()) {
+                Ok(f) => f,
+                Err(_) => {
+                    return SYSCALL_ERR;
+                }
+            }
+        } else {
+            return SYSCALL_ERR;
+        }
     };
 
     let mut open_files = crate::fs::OPEN_FILES.lock();

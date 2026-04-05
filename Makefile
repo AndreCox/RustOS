@@ -37,6 +37,10 @@ $(DISK_IMG):
 	mkfs.fat -F 32 $(DISK_IMG)
 
 apps: $(DISK_IMG)
+	@if command -v fuser >/dev/null 2>&1 && fuser $(DISK_IMG) >/dev/null 2>&1; then \
+		echo "ERROR: $(DISK_IMG) is currently in use (likely QEMU). Stop it before running 'make apps'."; \
+		exit 1; \
+	fi
 	@echo "==> Compiling Apps: $(APPS)"
 	$(foreach app,$(APPS),\
 		echo "Building $(app)..." && \
@@ -52,6 +56,34 @@ apps: $(DISK_IMG)
 	@if [ -f "assets/data/DOOM.WAD" ]; then \
 		echo "Copying DOOM.WAD to disk..."; \
 		mcopy -D o -i $(DISK_IMG) assets/data/DOOM.WAD ::/; \
+	elif [ -f "assets/data/doom.wad" ]; then \
+		echo "Copying doom.wad to disk..."; \
+		mcopy -D o -i $(DISK_IMG) assets/data/doom.wad ::/; \
+	fi
+	@if [ -d "assets/data/id1" ]; then \
+		if mdir -i $(DISK_IMG) ::/id1/pak0.pak >/dev/null 2>&1; then \
+			echo "Quake id1 data already present, skipping copy."; \
+		else \
+			echo "Copying Quake id1 data to disk (one-time setup)..."; \
+			if ! mdir -i $(DISK_IMG) ::/id1 >/dev/null 2>&1; then \
+				echo "  -> creating /id1"; \
+				mmd -i $(DISK_IMG) ::/id1; \
+			fi; \
+			for f in assets/data/id1/pak*.pak assets/data/id1/*.wad; do \
+				if [ -f "$$f" ]; then \
+					name=$$(basename "$$f"); \
+					echo "  -> $$name (copying)"; \
+					mcopy -D o -i $(DISK_IMG) "$$f" ::/id1/; \
+				fi; \
+			done; \
+		fi; \
+		for f in assets/data/id1/*.cfg; do \
+			if [ -f "$$f" ]; then \
+				name=$$(basename "$$f"); \
+				echo "  -> $$name (sync)"; \
+				mcopy -D o -i $(DISK_IMG) "$$f" ::/id1/; \
+			fi; \
+		done; \
 	fi
 
 # 1. Build the Rust kernel

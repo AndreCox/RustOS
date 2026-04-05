@@ -30,13 +30,9 @@ fn main() {
         "WinQuake/mathlib.c",
         "WinQuake/menu.c",
         "WinQuake/model.c",
-        "WinQuake/net_bsd.c",
-        "WinQuake/net_dgrm.c",
         "WinQuake/net_loop.c",
         "WinQuake/net_main.c",
-        "WinQuake/net_udp.c",
         "WinQuake/net_vcr.c",
-        "WinQuake/net_wso.c",
         "WinQuake/nonintel.c",
         "WinQuake/pr_cmds.c",
         "WinQuake/pr_edict.c",
@@ -57,9 +53,6 @@ fn main() {
         "WinQuake/r_vars.c",
         "WinQuake/sbar.c",
         "WinQuake/screen.c",
-        "WinQuake/snd_dma.c",
-        "WinQuake/snd_mem.c",
-        "WinQuake/snd_mix.c",
         "WinQuake/snd_null.c",
         "WinQuake/sv_main.c",
         "WinQuake/sv_move.c",
@@ -73,7 +66,7 @@ fn main() {
         "WinQuake/cd_null.c",
         "WinQuake/in_null.c",
         "WinQuake/net_none.c",
-        "WinQuake/vid_null.c",
+        "WinQuake/vid_rustos.c",
     ];
 
     let mut build = cc::Build::new();
@@ -82,6 +75,8 @@ fn main() {
         .define("BUILD_NULL", None)
         .warnings(false)
         .flag("-std=c11")
+        .flag_if_supported("-fcommon")
+        .flag_if_supported("-fPIC")
         .flag_if_supported("-ffreestanding")
         .flag_if_supported("-fno-builtin")
         .flag_if_supported("-fomit-frame-pointer")
