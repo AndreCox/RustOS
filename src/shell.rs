@@ -10,6 +10,10 @@ use crate::program_loader::launch_program;
 pub fn task_shell() -> ! {
     let mut input_buffer = String::new();
     let mut current_dir = String::from("/");
+    let mut path_entries: Vec<String> = Vec::new();
+    path_entries.push(String::from("/apps"));
+    path_entries.push(String::from("/bin"));
+    path_entries.push(String::from("/"));
 
     // Give system time to initialize
     crate::timer::sleep_ms(1000);
@@ -30,7 +34,7 @@ pub fn task_shell() -> ! {
                     println!();
                     let cmd = input_buffer.trim();
                     if !cmd.is_empty() {
-                        execute_command(cmd, &mut current_dir);
+                        execute_command(cmd, &mut current_dir, &mut path_entries);
                     }
                     input_buffer.clear();
                     print_prompt(&current_dir);
@@ -100,7 +104,34 @@ fn resolve_path(current_dir: &str, input: &str) -> String {
     }
 }
 
-fn execute_command(cmd_line: &str, current_dir: &mut String) {
+fn join_path(base_dir: &str, item: &str) -> String {
+    if base_dir == "/" {
+        normalize_path(&crate::alloc::format!("/{}", item))
+    } else {
+        normalize_path(&crate::alloc::format!("{}/{}", base_dir, item))
+    }
+}
+
+fn command_candidates(current_dir: &str, cmd: &str, path_entries: &[String]) -> Vec<String> {
+    let mut candidates: Vec<String> = Vec::new();
+
+    if cmd.contains('/') {
+        candidates.push(resolve_path(current_dir, cmd));
+        return candidates;
+    }
+
+    for dir in path_entries {
+        let resolved_dir = resolve_path(current_dir, dir.as_str());
+        candidates.push(join_path(resolved_dir.as_str(), cmd));
+    }
+
+    // Preserve the old behavior as a final fallback.
+    candidates.push(resolve_path(current_dir, cmd));
+    candidates.push(cmd.into());
+    candidates
+}
+
+fn execute_command(cmd_line: &str, current_dir: &mut String, path_entries: &mut Vec<String>) {
     let mut parts = cmd_line.split_whitespace();
     let cmd = parts.next().unwrap_or("");
 
@@ -114,6 +145,9 @@ fn execute_command(cmd_line: &str, current_dir: &mut String) {
             println!("  cd <path> - Change current directory");
             println!("  pwd       - Print current directory");
             println!("  rm <file> - Remove a file");
+            println!("  path      - Show executable search path");
+            println!("  path add <dir> - Add a search directory");
+            println!("  path rm <dir> - Remove a search directory");
             println!("  <program> - Run a .bin program");
         }
         "clear" => {
@@ -210,20 +244,59 @@ fn execute_command(cmd_line: &str, current_dir: &mut String) {
                 println!("Usage: rm <filename>");
             }
         }
-        _ => {
-            // Attempt to launch it as a program
-            let arg = parts.next().map(|a| resolve_path(current_dir, a));
-            let filename = resolve_path(current_dir, cmd);
-
-            println!("Attempting to launch {}...", filename.as_str());
-            match launch_program(filename.as_str(), arg.as_deref()) {
-                Ok(task_id) => {
-                    println!("Launched {} with Task ID {}", filename.as_str(), task_id);
-                }
-                Err(e) => {
-                    println!("Failed to launch {}: {}", filename.as_str(), e);
+        "path" => match parts.next() {
+            None => {
+                println!("PATH={}", path_entries.join(":"));
+            }
+            Some("add") => {
+                if let Some(dir) = parts.next() {
+                    let resolved = resolve_path(current_dir, dir);
+                    if path_entries.iter().any(|p| p == &resolved) {
+                        println!("path: already present: {}", resolved);
+                    } else {
+                        path_entries.push(resolved.clone());
+                        println!("path: added {}", resolved);
+                    }
+                } else {
+                    println!("Usage: path add <dir>");
                 }
             }
+            Some("rm") => {
+                if let Some(dir) = parts.next() {
+                    let resolved = resolve_path(current_dir, dir);
+                    let old_len = path_entries.len();
+                    path_entries.retain(|p| p != &resolved);
+                    if path_entries.len() == old_len {
+                        println!("path: not found: {}", resolved);
+                    } else {
+                        println!("path: removed {}", resolved);
+                    }
+                } else {
+                    println!("Usage: path rm <dir>");
+                }
+            }
+            Some(_) => {
+                println!("Usage: path [add <dir>|rm <dir>]");
+            }
+        },
+        _ => {
+            let arg = parts.next().map(|a| resolve_path(current_dir, a));
+
+            // Let the program loader resolve path/case variants for each PATH candidate.
+            let candidates = command_candidates(current_dir, cmd, path_entries);
+            for filename in candidates {
+                match launch_program(filename.as_str(), arg.as_deref()) {
+                    Ok(task_id) => {
+                        println!("Launched {} with Task ID {}", filename.as_str(), task_id);
+                        return;
+                    }
+                    Err(_) => {
+                        continue;
+                    }
+                }
+            }
+
+            println!("Command not found: {}", cmd);
         }
     }
 }
