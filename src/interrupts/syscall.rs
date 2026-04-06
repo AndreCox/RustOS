@@ -149,6 +149,12 @@ pub extern "C" fn syscall_handler(frame: &mut InterruptStackFrame) -> u64 {
         20 => {
             frame.rax = unsafe { sys_fs_rename(arg1, arg2) };
         }
+        21 => {
+            frame.rax = crate::io::mouse::take_deltas_packed() as u64;
+        }
+        22 => {
+            frame.rax = crate::io::mouse::get_buttons_mask() as u64;
+        }
         _ => {
             serial_println!("Unknown syscall: {}", syscall_nr);
         }

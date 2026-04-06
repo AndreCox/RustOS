@@ -22,6 +22,8 @@ pub const SYS_EXIT_EXCLUSIVE_GRAPHICS: u64 = 17;
 pub const SYS_FS_MKDIR: u64 = 18;
 pub const SYS_FS_REMOVE: u64 = 19;
 pub const SYS_FS_RENAME: u64 = 20;
+pub const SYS_MOUSE_GET_DELTAS: u64 = 21;
+pub const SYS_MOUSE_GET_BUTTONS: u64 = 22;
 
 #[inline]
 pub fn syscall0(nr: u64) -> u64 {
@@ -111,6 +113,19 @@ pub fn get_scancode() -> Option<u8> {
         0 => None,
         b => Some(b),
     }
+}
+
+#[inline]
+pub fn mouse_get_deltas() -> (i16, i16) {
+    let packed = syscall0(SYS_MOUSE_GET_DELTAS) as u32;
+    let dx = (packed & 0xFFFF) as u16 as i16;
+    let dy = ((packed >> 16) & 0xFFFF) as u16 as i16;
+    (dx, dy)
+}
+
+#[inline]
+pub fn mouse_get_buttons() -> u8 {
+    syscall0(SYS_MOUSE_GET_BUTTONS) as u8
 }
 
 #[inline]

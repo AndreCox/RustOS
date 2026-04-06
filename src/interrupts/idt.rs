@@ -96,15 +96,17 @@ pub unsafe fn init_pic() {
     outb(PIC1_DATA, 0x01);
     outb(PIC2_DATA, 0x01);
 
-    outb(PIC1_DATA, 0xFC);
-    outb(PIC2_DATA, 0xFF);
+    // Unmask IRQ0 (timer), IRQ1 (keyboard) and IRQ2 (cascade) on master.
+    // Unmask IRQ12 (mouse) on slave.
+    outb(PIC1_DATA, 0xF8);
+    outb(PIC2_DATA, 0xEF);
 }
 
 pub(super) fn send_eoi(interrupt_number: u64) {
-    outb(0x20, 0x20);
     if interrupt_number >= 40 {
         outb(0xA0, 0x20);
     }
+    outb(0x20, 0x20);
 }
 
 fn outb(port: u16, val: u8) {

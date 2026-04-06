@@ -2,6 +2,15 @@ use crate::helpers::hcf;
 use crate::serial_println;
 use core::arch::asm;
 
+#[inline]
+fn ps2_status() -> u8 {
+    let status: u8;
+    unsafe {
+        asm!("in al, dx", out("al") status, in("dx") 0x64 as u16);
+    }
+    status
+}
+
 #[repr(C)]
 #[derive(Debug)]
 pub struct InterruptStackFrame {
@@ -171,11 +180,30 @@ pub extern "C" fn exception_handler(frame: &InterruptStackFrame) -> u64 {
             }
         }
     } else if num == 33 {
+        let status = ps2_status();
         let scancode: u8;
         unsafe {
             asm!("in al, dx", out("al") scancode, in("dx") 0x60 as u16);
         }
-        crate::io::keyboard::push_scancode(scancode);
+        // If AUX bit is set, this byte belongs to mouse; keep it out of keyboard queue.
+        if (status & 0x20) != 0 {
+            crate::io::mouse::on_irq_byte(scancode);
+        } else {
+            crate::io::keyboard::push_scancode(scancode);
+        }
+    }
+
+    if num == 44 {
+        // PIC IRQ12 is remapped to vector 44.
+        let status = ps2_status();
+        // Only consume data when output buffer is full and it is AUX-originated.
+        if (status & 0x21) == 0x21 {
+            let byte: u8;
+            unsafe {
+                asm!("in al, dx", out("al") byte, in("dx") 0x60 as u16);
+            }
+            crate::io::mouse::on_irq_byte(byte);
+        }
     }
 
     if num >= 32 {

@@ -292,6 +292,12 @@ void Sys_SendKeyEvents (void)
                 int c = quake_poll_key();
                 if (c <= 0)
                         break;
+                /*
+                 * Raw scancode path above is authoritative. Restrict fallback to ASCII only,
+                 * otherwise synthetic high-byte keycodes can fight menu navigation.
+                 */
+                if (c > 127)
+                        continue;
                 if (c >= 'A' && c <= 'Z')
                         c = c - 'A' + 'a';
                 Key_Event(c & 0xFF, true);

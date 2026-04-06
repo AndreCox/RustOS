@@ -110,6 +110,10 @@ pub extern "C" fn kmain() -> ! {
     }
     println!("IDT and PIC loaded.");
 
+    println!("Initializing PS/2 mouse...");
+    crate::io::mouse::init_ps2_mouse();
+    println!("PS/2 mouse initialized.");
+
     println!("Initializing Memory...");
     memory::init();
     println!("Memory initialized.");
