@@ -67,6 +67,7 @@ fn main() {
         "WinQuake/in_null.c",
         "WinQuake/net_none.c",
         "WinQuake/vid_rustos.c",
+        "src/strtod_shim.c",
     ];
 
     let mut build = cc::Build::new();

@@ -124,7 +124,11 @@ pub unsafe extern "C" fn strstr(haystack: *const c_char, needle: *const c_char) 
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn strtol(nptr: *const c_char, endptr: *mut *mut c_char, mut base: i32) -> i64 {
+pub unsafe extern "C" fn strtol(
+    nptr: *const c_char,
+    endptr: *mut *mut c_char,
+    mut base: i32,
+) -> i64 {
     let mut s = nptr;
     while unsafe { *s != 0 && (*s as u8).is_ascii_whitespace() } {
         s = unsafe { s.add(1) };
@@ -178,7 +182,11 @@ pub unsafe extern "C" fn strtol(nptr: *const c_char, endptr: *mut *mut c_char, m
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn strtod_rust(s_ptr: *const c_char, endptr: *mut *mut c_char) -> f64 {
     if s_ptr.is_null() {
-        if !endptr.is_null() { unsafe { *endptr = core::ptr::null_mut(); } }
+        if !endptr.is_null() {
+            unsafe {
+                *endptr = core::ptr::null_mut();
+            }
+        }
         return 0.0;
     }
     let mut s = s_ptr;
@@ -223,7 +231,7 @@ pub unsafe extern "C" fn strtod_rust(s_ptr: *const c_char, endptr: *mut *mut c_c
         } else if unsafe { *exp_s == b'+' as i8 } {
             exp_s = unsafe { exp_s.add(1) };
         }
-        
+
         let mut exp_val = 0;
         let mut exp_has_digit = false;
         while unsafe { *exp_s >= b'0' as i8 && *exp_s <= b'9' as i8 } {
@@ -231,7 +239,7 @@ pub unsafe extern "C" fn strtod_rust(s_ptr: *const c_char, endptr: *mut *mut c_c
             exp_val = exp_val * 10 + (unsafe { *exp_s } - b'0' as i8) as i32;
             exp_s = unsafe { exp_s.add(1) };
         }
-        
+
         if exp_has_digit {
             s = exp_s;
             let mut multiplier = 1.0;
@@ -247,35 +255,22 @@ pub unsafe extern "C" fn strtod_rust(s_ptr: *const c_char, endptr: *mut *mut c_c
     }
 
     if !endptr.is_null() {
-        unsafe { *endptr = if has_digit { s as *mut c_char } else { s_ptr as *mut c_char } };
+        unsafe {
+            *endptr = if has_digit {
+                s as *mut c_char
+            } else {
+                s_ptr as *mut c_char
+            }
+        };
     }
 
     if has_digit && neg { -val } else { val }
 }
 
-#[unsafe(no_mangle)]
-#[unsafe(naked)]
-pub unsafe extern "C" fn strtod(nptr: *const c_char, endptr: *mut *mut c_char) -> f64 {
-    core::arch::naked_asm!(
-        "sub rsp, 8",
-        "call {strtod_rust}",
-        "movq xmm0, rax",
-        "add rsp, 8",
-        "ret",
-        strtod_rust = sym strtod_rust
-    )
+pub unsafe fn strtod(nptr: *const c_char, endptr: *mut *mut c_char) -> f64 {
+    unsafe { strtod_rust(nptr, endptr) }
 }
 
-#[unsafe(no_mangle)]
-#[unsafe(naked)]
-pub unsafe extern "C" fn atof(nptr: *const c_char) -> f64 {
-    core::arch::naked_asm!(
-        "sub rsp, 8",
-        "xor rsi, rsi",
-        "call {strtod_rust}",
-        "movq xmm0, rax",
-        "add rsp, 8",
-        "ret",
-        strtod_rust = sym strtod_rust
-    )
+pub unsafe fn atof(nptr: *const c_char) -> f64 {
+    unsafe { strtod_rust(nptr, core::ptr::null_mut()) }
 }
