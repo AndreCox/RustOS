@@ -21,15 +21,27 @@ pub static mut INTERRUPT_FPU_SNAPSHOT: InterruptFpuSnapshot = InterruptFpuSnapsh
 #[unsafe(no_mangle)]
 pub static mut INTERRUPT_FPU_SNAPSHOT_VALID: u8 = 0;
 
+pub enum SchedulerMode {
+    RoundRobin,
+}
+
+pub struct SchedulerStats {
+    pub burst_score: u64,
+    pub last_burst_length: u64,
+    pub priority: u8,
+}
+
 pub struct Scheduler {
     pub tasks: VecDeque<Task>,
     pub current_task: Option<Task>,
+    pub mode: SchedulerMode,
 }
 impl Scheduler {
     pub fn new() -> Self {
         Scheduler {
             tasks: VecDeque::new(),
             current_task: None,
+            mode: SchedulerMode::RoundRobin,
         }
     }
 

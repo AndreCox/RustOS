@@ -47,6 +47,15 @@ void VID_ShiftPalette(unsigned char *palette)
     VID_SetPalette(palette);
 }
 
+void VID_MenuDraw(void)
+{
+}
+
+void VID_MenuKey(int key)
+{
+    (void)key;
+}
+
 void VID_Init(unsigned char *palette)
 {
     vid.maxwarpwidth = vid.width = vid.conwidth = BASEWIDTH;
@@ -63,6 +72,9 @@ void VID_Init(unsigned char *palette)
 
     VID_SetPalette(palette);
     quake_enter_graphics();
+
+    vid_menudrawfn = VID_MenuDraw;
+    vid_menukeyfn = VID_MenuKey;
 }
 
 void VID_Shutdown(void)
