@@ -7,4 +7,5 @@ RustOS.iso
 *.wad
 *.img
 *.bin
+!limine/*.bin
 /assets/data/id1/
