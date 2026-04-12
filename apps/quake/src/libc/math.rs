@@ -139,7 +139,7 @@ pub extern "C" fn acos_rust(x_bits: u64) -> u64 {
     }
     // Approximation: acos(x) = sqrt(1-x) * (1.5707963267948966 - 0.213300989*x + 0.07786196*x*x - 0.015024462*x*x*x ... )
     // A classic robust Nvidia approximation
-    let a = 1.434128;
+
     let out = if x == 1.0 {
         0.0
     } else if x == -1.0 {
@@ -147,7 +147,7 @@ pub extern "C" fn acos_rust(x_bits: u64) -> u64 {
     } else {
         let neg = x < 0.0;
         let nx = abs_f64(x);
-        let mut res = unsafe { sqrt(1.0 - nx) }
+        let res = unsafe { sqrt(1.0 - nx) }
             * (1.5707288 - nx * (0.2121144 - nx * (0.0742610 - nx * 0.0187293)));
         if neg { PI - res } else { res }
     };
@@ -259,11 +259,11 @@ pub unsafe extern "C" fn modf(x: f64, iptr: *mut f64) -> f64 {
     let abs_x = if x < 0.0 { -x } else { x };
     if abs_x >= 4503599627370496.0 || x != x {
         // 2^52, same guard as floor/ceil
-        *iptr = x;
+        unsafe { *iptr = x };
         return 0.0;
     }
     let i = (x as i64) as f64;
-    *iptr = i;
+    unsafe { *iptr = i };
     x - i
 }
 

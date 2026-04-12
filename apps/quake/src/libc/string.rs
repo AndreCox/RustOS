@@ -267,10 +267,3 @@ pub unsafe extern "C" fn strtod_rust(s_ptr: *const c_char, endptr: *mut *mut c_c
     if has_digit && neg { -val } else { val }
 }
 
-pub unsafe fn strtod(nptr: *const c_char, endptr: *mut *mut c_char) -> f64 {
-    unsafe { strtod_rust(nptr, endptr) }
-}
-
-pub unsafe fn atof(nptr: *const c_char) -> f64 {
-    unsafe { strtod_rust(nptr, core::ptr::null_mut()) }
-}

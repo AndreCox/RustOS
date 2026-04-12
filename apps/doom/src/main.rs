@@ -58,8 +58,7 @@ const SYS_FS_MKDIR: u64 = 18;
 const SYS_FS_REMOVE: u64 = 19;
 const SYS_FS_RENAME: u64 = 20;
 const SYS_GET_SCANCODE: u64 = 7;
-const SYS_GET_KEY: u64 = 9;
-const SYS_EXIT: u64 = 2;
+
 
 fn print_char(c: u8) {
     unsafe {
@@ -148,7 +147,7 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
         return core::ptr::null_mut();
     }
 
-    let base = unsafe { core::ptr::addr_of!(MALLOC_BUFFER) as usize };
+    let base = core::ptr::addr_of!(MALLOC_BUFFER) as usize;
     let header_size = core::mem::size_of::<AllocHeader>();
     let ptr_addr = ptr as usize;
 
@@ -677,11 +676,9 @@ pub unsafe extern "C" fn access(path: *const c_char, _mode: i32) -> i32 {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn exit(_status: i32) -> ! {
-    unsafe {
-        print_str("[DOOM] Exit called with status: ");
-        print_num(_status as i64);
-        print_char(b'\n');
-    }
+    print_str("[DOOM] Exit called with status: ");
+    print_num(_status as i64);
+    print_char(b'\n');
     loop {
         unsafe {
             core::arch::asm!("int 0x80", in("rax") 2u64, in("rdi") _status as u64);
@@ -859,7 +856,6 @@ pub unsafe extern "C" fn strstr(haystack: *const i8, needle: *const i8) -> *mut 
     }
 }
 
-#[unsafe(no_mangle)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn atoi(s: *const i8) -> i32 {
     unsafe {
@@ -1185,7 +1181,7 @@ unsafe fn vprintf_core(fmt: *const i8, mut ap: core::ffi::VaList) {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn printf(fmt: *const i8, mut ap: ...) -> i32 {
+pub unsafe extern "C" fn printf(fmt: *const i8, ap: ...) -> i32 {
     unsafe {
         vprintf_core(fmt, ap);
         0
@@ -1206,7 +1202,7 @@ pub unsafe extern "C" fn vsprintf(s: *mut i8, fmt: *const i8, ap: core::ffi::VaL
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn fprintf(_s: *mut c_void, fmt: *const i8, mut ap: ...) -> i32 {
+pub unsafe extern "C" fn fprintf(_s: *mut c_void, fmt: *const i8, ap: ...) -> i32 {
     unsafe {
         vprintf_core(fmt, ap);
         0
@@ -1214,7 +1210,7 @@ pub unsafe extern "C" fn fprintf(_s: *mut c_void, fmt: *const i8, mut ap: ...) -
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn snprintf(s: *mut i8, n: usize, fmt: *const i8, mut ap: ...) -> i32 {
+pub unsafe extern "C" fn snprintf(s: *mut i8, n: usize, fmt: *const i8, ap: ...) -> i32 {
     unsafe { vsnprintf(s, n, fmt, ap) }
 }
 

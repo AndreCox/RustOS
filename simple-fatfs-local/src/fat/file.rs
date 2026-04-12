@@ -9,12 +9,15 @@ use crate::{Clock, FSError, FSResult, InternalFSError};
 use embedded_io::*;
 
 #[derive(Clone, Debug)]
+/// Serializable-like file state used by RustOS to reopen files from saved properties.
 pub struct FileProps {
+    /// The filesystem metadata associated with the file.
     pub entry: Properties,
     /// the byte offset of the R/W pointer
     ///
     /// this can't exceed the file size, so they share the same data type
     pub offset: FileSize,
+    /// The cluster currently associated with `offset`.
     pub current_cluster: ClusterIndex,
 }
 
@@ -50,6 +53,7 @@ where
     C: Clock,
 {
     pub(crate) fs: &'a FileSystem<S, C>,
+    /// Public so external callers can persist and restore file state.
     pub props: FileProps,
 }
 
@@ -81,6 +85,7 @@ where
     S: BlockRead,
     C: Clock,
 {
+    /// Recreate a read-only file handle from previously captured file properties.
     pub fn from_props(props: FileProps, fs: &'a FileSystem<S, C>) -> Self {
         Self { fs, props }
     }

@@ -19,7 +19,7 @@ const SYS_CLEAR_SCREEN: u64 = 3;
 const SYS_SET_CURSOR: u64 = 4;
 const SYS_FS_READ: u64 = 5;
 const SYS_FS_WRITE: u64 = 6;
-const SYS_GET_SCANCODE: u64 = 7;
+
 const SYS_YIELD: u64 = 8;
 const SYS_GET_KEY: u64 = 9;
 
@@ -95,20 +95,7 @@ impl Editor {
         self.status_len = count;
     }
 
-    fn set_status_parts(&mut self, prefix: &str, middle: &str, suffix: &str) {
-        let mut idx = 0;
-        idx += self.copy_into_status(idx, prefix.as_bytes());
-        idx += self.copy_into_status(idx, middle.as_bytes());
-        idx += self.copy_into_status(idx, suffix.as_bytes());
-        self.status_len = idx;
-    }
 
-    fn copy_into_status(&mut self, offset: usize, bytes: &[u8]) -> usize {
-        let remaining = self.status.len().saturating_sub(offset);
-        let count = min(bytes.len(), remaining);
-        self.status[offset..offset + count].copy_from_slice(&bytes[..count]);
-        count
-    }
 
     fn load_file(&mut self) {
         let read = syscall_fs_read(
@@ -340,7 +327,6 @@ impl Editor {
                 }
                 syscall_clear_screen();
                 syscall_exit();
-                true
             }
             Event::Up => {
                 self.move_up();
@@ -602,17 +588,7 @@ fn syscall_clear_screen() {
     }
 }
 
-fn syscall_get_scancode() -> u8 {
-    let mut result = SYS_GET_SCANCODE;
-    unsafe {
-        core::arch::asm!(
-            "int 0x80",
-            inlateout("rax") result,
-            options(nostack, preserves_flags)
-        );
-    }
-    result as u8
-}
+
 
 fn syscall_get_key() -> u8 {
     let mut result = SYS_GET_KEY;

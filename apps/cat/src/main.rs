@@ -6,8 +6,6 @@ fn panic(_info: &core::panic::PanicInfo) -> ! {
 }
 
 const SYS_PRINT_CHAR: u64 = 1;
-const SYS_EXIT: u64 = 2;
-const SYS_SET_CURSOR: u64 = 4;
 const SYS_FS_READ: u64 = 5;
 
 fn print_str(s: &str) {
