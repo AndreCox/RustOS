@@ -22,16 +22,16 @@ The project started as a way to learn low-level systems programming and turned i
 
 ## Highlights
 
-| Area | What it includes |
-| --- | --- |
-| Kernel | Rust `no_std` kernel targeting `x86_64` |
-| Boot | Limine boot flow and custom kernel image |
-| CPU setup | GDT, IDT, interrupts, and timer-driven scheduling |
-| Memory | Physical frame allocation, paging, and dynamic heap growth |
-| Multitasking | Preemptive round-robin scheduler with idle task support |
-| Filesystem | FAT32 support for loading apps and saving files |
-| Userspace | Syscalls for display, input, timing, and filesystem access |
-| Fun part | Native ports of DOOM and Quake |
+| Area         | What it includes                                           |
+| ------------ | ---------------------------------------------------------- |
+| Kernel       | Rust `no_std` kernel targeting `x86_64`                    |
+| Boot         | Limine boot flow and custom kernel image                   |
+| CPU setup    | GDT, IDT, interrupts, and timer-driven scheduling          |
+| Memory       | Physical frame allocation, paging, and dynamic heap growth |
+| Multitasking | Preemptive round-robin scheduler with idle task support    |
+| Filesystem   | FAT32 support for loading apps and saving files            |
+| Userspace    | Syscalls for display, input, timing, and filesystem access |
+| Fun part     | Native ports of DOOM and Quake                             |
 
 ## Build and Run
 
@@ -51,7 +51,7 @@ Local tools you will need include QEMU, `xorriso`, `mkfs.fat`, and `mtools`.
 
 ## Why This Project Exists
 
-The goal was to understand how kernels are built from the ground up while making something playful enough to stay motivating. That meant not stopping at a boot screen: the project kept growing until it supported graphics, input, files, multitasking, and real software.
+The goal was to understand how kernels are built from the ground up while making something fun enough to stay motivating. That meant not stopping at a boot screen: the project kept growing until it supported graphics, input, files, multitasking, and real software.
 
 ## Read More
 
