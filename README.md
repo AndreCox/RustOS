@@ -22,11 +22,15 @@ The project started as a way to learn low-level systems programming and turned i
 
 ## Demo Video
 
-See RustOS in action here:
+<div align="center">
 
-[![RustOS demo video thumbnail](https://img.youtube.com/vi/oWDV8jlYdrE/maxresdefault.jpg)](https://youtu.be/oWDV8jlYdrE)
+<a href="https://youtu.be/oWDV8jlYdrE">
+  <img src="https://img.youtube.com/vi/oWDV8jlYdrE/maxresdefault.jpg" alt="RustOS demo video thumbnail" width="720" />
+</a>
 
-**[Watch the demo on YouTube](https://youtu.be/oWDV8jlYdrE)**
+**[Watch RustOS on YouTube](https://youtu.be/oWDV8jlYdrE)**
+
+</div>
 
 ## Highlights
 
