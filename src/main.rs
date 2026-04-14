@@ -225,12 +225,6 @@ pub extern "C" fn kmain() -> ! {
         asm!("sti"); // Enable interrupts
     }
     loop {
-        // while let Some(scancode) = SCANCODE_QUEUE.pop() {
-        //     if let Some(character) = scancode_to_char(scancode) {
-        //         print!("{}", character);
-        //     }
-        // }
-
         crate::multitasker::yield_now();
     }
 }
