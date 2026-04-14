@@ -20,6 +20,14 @@ RustOS is a `no_std` hobby operating system for `x86_64` built from scratch in R
 
 The project started as a way to learn low-level systems programming and turned into something much more complete and much more fun: a custom OS that can boot, schedule tasks, load programs, and run native ports of DOOM and Quake.
 
+## Demo Video
+
+See RustOS in action here:
+
+[![RustOS demo video thumbnail](https://img.youtube.com/vi/oWDV8jlYdrE/maxresdefault.jpg)](https://youtu.be/oWDV8jlYdrE)
+
+**[Watch the demo on YouTube](https://youtu.be/oWDV8jlYdrE)**
+
 ## Highlights
 
 | Area         | What it includes                                           |
